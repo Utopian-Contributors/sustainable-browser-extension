@@ -1,0 +1,518 @@
+import fs from "fs";
+import path from "path";
+import { URL } from "url";
+
+interface DependencyInfo {
+  name: string;
+  version: string;
+  url: string;
+  content: string;
+  imports: string[];
+  isLeaf: boolean;
+  peerContext?: { [peerName: string]: string };
+}
+
+interface LeafManifest {
+  [esmUrlWithPeerContext: string]: string;
+}
+
+interface RelativeImportMapping {
+  [depNameVersion: string]: NestedRelativeImports;
+}
+
+interface NestedRelativeImports {
+  [pathSegment: string]: NestedRelativeImports | string;
+}
+
+interface CompleteManifest {
+  dependencies: LeafManifest;
+  relativeImports: RelativeImportMapping;
+  availableVersions: { [packageName: string]: string[] };
+}
+
+export class RelativeImportProcessor {
+  private downloadedDeps: Map<string, DependencyInfo> = new Map();
+  private relativeImportMappings: RelativeImportMapping = {};
+  private baseUrlToContextualUrls: Map<string, string[]> = new Map();
+  private manifestPath: string;
+
+  constructor(manifestPath: string = "./dependencies/manifest.json") {
+    this.manifestPath = manifestPath;
+  }
+
+  async processRelativeImports(): Promise<void> {
+    console.log("🔗 Processing relative import mappings...");
+
+    // Load existing manifest
+    const manifest = this.loadManifest();
+
+    // Rebuild downloadedDeps from the files
+    console.log("📚 Rebuilding dependency information from files...");
+    await this.rebuildDependencyInfo();
+
+    // Build fast lookup for wrapper mappings
+    console.log("📚 Building URL lookup index...");
+    this.buildUrlLookupIndex();
+
+    // Generate mappings for relative imports
+    console.log("🔗 Generating relative import mappings...");
+    this.generateRelativeImportMappings();
+
+    // Update manifest with new relative import mappings
+    manifest.relativeImports = this.relativeImportMappings;
+    this.saveManifest(manifest);
+
+    console.log("✅ Relative import processing complete!");
+  }
+
+  private loadManifest(): CompleteManifest {
+    if (!fs.existsSync(this.manifestPath)) {
+      throw new Error(`Manifest not found at ${this.manifestPath}`);
+    }
+
+    const manifestContent = fs.readFileSync(this.manifestPath, "utf8");
+    return JSON.parse(manifestContent);
+  }
+
+  private async rebuildDependencyInfo(): Promise<void> {
+    const manifest = this.loadManifest();
+    const dependenciesDir = path.dirname(this.manifestPath);
+
+    // Read all dependency files and reconstruct DependencyInfo
+    for (const [esmUrl, filename] of Object.entries(
+      manifest.dependencies
+    )) {
+      const filePath = path.join(dependenciesDir, filename);
+
+      if (fs.existsSync(filePath)) {
+        const content = fs.readFileSync(filePath, "utf8");
+
+        // Extract package name and version from URL
+        const name = this.extractPackageNameFromUrl(esmUrl);
+        const version = this.extractVersionFromUrl(esmUrl) || "latest";
+
+        // Extract peer context from URL
+        const peerContext = this.extractPeerContextFromUrl(esmUrl);
+
+        // Extract all imports from this file
+        const rawImports = this.extractRawImports(content);
+
+        const depInfo: DependencyInfo = {
+          name,
+          version,
+          url: esmUrl,
+          content,
+          imports: rawImports, // Keep raw imports for now
+          isLeaf: !this.hasEsmShExports(content),
+          peerContext,
+        };
+
+        this.downloadedDeps.set(esmUrl, depInfo);
+        console.log(`  📄 Loaded: ${name}@${version} (${filename})`);
+      }
+    }
+
+    console.log(`  ✅ Loaded ${this.downloadedDeps.size} dependency files`);
+  }
+
+  private extractRawImports(content: string): string[] {
+    // Match both absolute URLs and relative paths - use \s* to handle minified code with no spaces
+    const importRegex = /(?:import|export).*?from\s*["']([^"']+)["']/g;
+    const dynamicImportRegex = /import\s*\(\s*["']([^"']+)["']\s*\)/g;
+    // Also match bare import statements without 'from'
+    const bareImportRegex = /^import\s+["']([^"']+)["'];?$/gm;
+
+    const imports: string[] = [];
+    let match;
+
+    // Extract from import/export statements
+    while ((match = importRegex.exec(content)) !== null) {
+      imports.push(match[1]);
+    }
+
+    // Extract from dynamic imports
+    while ((match = dynamicImportRegex.exec(content)) !== null) {
+      imports.push(match[1]);
+    }
+
+    // Extract bare imports
+    while ((match = bareImportRegex.exec(content)) !== null) {
+      imports.push(match[1]);
+    }
+
+    // Filter out template literals and invalid imports
+    const validImports = imports.filter((importPath) => {
+      // Skip template literals, data URLs, and other non-file imports
+      return (
+        !importPath.includes("${") &&
+        !importPath.startsWith("data:") &&
+        !importPath.startsWith("blob:") &&
+        !importPath.startsWith("chrome-extension:") &&
+        importPath.trim().length > 0
+      );
+    });
+
+    return [...new Set(validImports)]; // Remove duplicates
+  }
+
+  private hasEsmShExports(content: string): boolean {
+    // Check if the content has export statements that reference esm.sh URLs or absolute paths
+    const exportFromRegex = /export\s+.*?\s+from\s+["']([^"']+)["']/g;
+    let match;
+
+    while ((match = exportFromRegex.exec(content)) !== null) {
+      const exportPath = match[1];
+      if (exportPath.startsWith("/") || exportPath.includes("esm.sh")) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private extractPeerContextFromUrl(url: string): {
+    [peerName: string]: string;
+  } {
+    try {
+      const urlObj = new URL(url);
+      const peerContext: { [peerName: string]: string } = {};
+
+      for (const [key, value] of urlObj.searchParams.entries()) {
+        peerContext[key] = value;
+      }
+
+      return peerContext;
+    } catch (error) {
+      return {};
+    }
+  }
+
+  private buildUrlLookupIndex(): void {
+    // Build a fast lookup map from base URLs to their contextual URLs
+    this.baseUrlToContextualUrls.clear();
+
+    for (const [contextualUrl, depInfo] of this.downloadedDeps.entries()) {
+      const baseUrl = contextualUrl.split("?")[0];
+
+      if (!this.baseUrlToContextualUrls.has(baseUrl)) {
+        this.baseUrlToContextualUrls.set(baseUrl, []);
+      }
+      this.baseUrlToContextualUrls.get(baseUrl)!.push(contextualUrl);
+    }
+
+    console.log(
+      `  📚 Built lookup index for ${this.baseUrlToContextualUrls.size} unique base URLs`
+    );
+  }
+
+  private generateRelativeImportMappings(): void {
+    // Create nested mappings for relative imports to their resolved absolute URLs
+    for (const [parentUrl, depInfo] of this.downloadedDeps.entries()) {
+      const originalImports = depInfo.imports; // Use the raw imports we extracted
+      const depKey = `${depInfo.name}@${depInfo.version}`;
+
+      console.log(
+        `  🔍 Processing ${depKey} (${originalImports.length} imports)`
+      );
+
+      for (const relativeImport of originalImports) {
+        // Check if it's a relative import
+        if (
+          relativeImport.startsWith("./") ||
+          relativeImport.startsWith("../")
+        ) {
+          try {
+            // Use the base URL without query parameters for resolving relative imports
+            const baseParentUrl = parentUrl.split("?")[0];
+
+            // Resolve to absolute URL
+            const absoluteUrl = this.resolveImportUrl(
+              relativeImport,
+              baseParentUrl
+            );
+
+            // Check if we have this URL in our dependencies
+            // First try to find with the same peer context as the current file
+            let matchedUrl: string | null = null;
+
+            // Extract peer context from the current file URL (parentUrl)
+            const currentPeerContext = depInfo.peerContext || {};
+
+            // First try to find a URL with matching peer context
+            if (Object.keys(currentPeerContext).length > 0) {
+              const targetQuery =
+                this.createSimplifiedPeerContextQuery(currentPeerContext);
+              const expectedContextualUrl = targetQuery
+                ? `${absoluteUrl}?${targetQuery}`
+                : absoluteUrl;
+
+              if (this.downloadedDeps.has(expectedContextualUrl)) {
+                matchedUrl = expectedContextualUrl;
+                console.log(
+                  `    ✅ Found contextual match: ${relativeImport} -> ${expectedContextualUrl}`
+                );
+              }
+            }
+
+            // Fallback: try exact match without context
+            if (!matchedUrl && this.downloadedDeps.has(absoluteUrl)) {
+              matchedUrl = absoluteUrl;
+              console.log(
+                `    ✅ Found exact match: ${relativeImport} -> ${absoluteUrl}`
+              );
+            }
+
+            if (!matchedUrl) {
+              // Debug log for troubleshooting
+              console.log(
+                `    ⚠️  No match for relative import ${relativeImport} from ${depInfo.name}@${depInfo.version}`
+              );
+              console.log(`         Resolved to: ${absoluteUrl}`);
+              console.log(
+                `         Expected contextual: ${
+                  Object.keys(currentPeerContext).length > 0
+                    ? absoluteUrl +
+                      "?" +
+                      this.createSimplifiedPeerContextQuery(currentPeerContext)
+                    : "none"
+                }`
+              );
+              continue; // Skip this import instead of throwing
+            }
+
+            // Initialize the dependency group if it doesn't exist
+            if (!this.relativeImportMappings[depKey]) {
+              this.relativeImportMappings[depKey] = {};
+            }
+
+            // Convert the resolved absolute URL to a path within the package structure
+            const packagePath = this.extractPackagePath(
+              absoluteUrl,
+              depInfo.name
+            );
+            if (packagePath) {
+              // Create nested structure using the absolute package path, not the relative path
+              // Use the original absoluteUrl (without peer context) as the target
+              this.setNestedPath(
+                this.relativeImportMappings[depKey],
+                packagePath,
+                absoluteUrl
+              );
+              console.log(
+                `    📁 Mapped: ${relativeImport} -> ${packagePath} = ${absoluteUrl}`
+              );
+            }
+          } catch (error) {
+            // Skip problematic relative imports
+            console.log(
+              `    ⚠️  Error processing relative import ${relativeImport} from ${depInfo.name}@${depInfo.version}: ${error}`
+            );
+          }
+        }
+      }
+    }
+
+    const totalMappings = this.countNestedMappings(this.relativeImportMappings);
+
+    console.log(
+      `  🔗 Generated ${totalMappings} relative import mappings across ${
+        Object.keys(this.relativeImportMappings).length
+      } dependencies`
+    );
+  }
+
+  private resolveImportUrl(importPath: string, baseUrl: string): string {
+    // If it's already an absolute URL, return as-is
+    if (importPath.startsWith("http://") || importPath.startsWith("https://")) {
+      return importPath;
+    }
+
+    // Handle relative imports
+    const baseUrlObj = new URL(baseUrl);
+
+    if (importPath.startsWith("./") || importPath.startsWith("../")) {
+      // Relative path: resolve against base URL
+      const basePathParts = baseUrlObj.pathname.split("/");
+      basePathParts.pop(); // Remove filename
+
+      const importParts = importPath.split("/");
+
+      for (const part of importParts) {
+        if (part === ".") {
+          continue;
+        } else if (part === "..") {
+          basePathParts.pop();
+        } else {
+          basePathParts.push(part);
+        }
+      }
+
+      return `${baseUrlObj.origin}${basePathParts.join("/")}`;
+    } else {
+      // Bare import (shouldn't happen in esm.sh but handle it)
+      return importPath;
+    }
+  }
+
+  private createSimplifiedPeerContextQuery(peerContext: {
+    [peerName: string]: string;
+  }): string {
+    // Simple implementation - just join all peer context entries
+    return Object.entries(peerContext || {})
+      .map(([name, version]) => `${name}=${version}`)
+      .join("&");
+  }
+
+  private extractPackagePath(
+    absoluteUrl: string,
+    packageName: string
+  ): string | null {
+    try {
+      const urlObj = new URL(absoluteUrl);
+
+      if (urlObj.hostname === "esm.sh") {
+        const pathParts = urlObj.pathname.split("/").filter((p) => p);
+
+        if (pathParts.length > 0) {
+          const packagePart = pathParts[0];
+          const expectedPrefix = packageName;
+
+          if (packagePart.startsWith(expectedPrefix)) {
+            const finalParts = pathParts.slice(1);
+            return finalParts.join("/");
+          }
+        }
+      }
+
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  private setNestedPath(
+    obj: NestedRelativeImports,
+    path: string,
+    value: string
+  ): void {
+    // Split the path into segments
+    const pathSegments = path.split("/").filter((segment) => segment !== "");
+
+    let current = obj;
+
+    // Navigate to the correct nested level
+    for (let i = 0; i < pathSegments.length - 1; i++) {
+      const segment = pathSegments[i];
+      if (!(segment in current)) {
+        current[segment] = {};
+      }
+      current = current[segment] as NestedRelativeImports;
+    }
+
+    // Set the final value
+    const finalSegment = pathSegments[pathSegments.length - 1];
+    current[finalSegment] = value;
+  }
+
+  private countNestedMappings(mappings: RelativeImportMapping): number {
+    let count = 0;
+
+    for (const depMappings of Object.values(mappings)) {
+      count += this.countNestedValues(depMappings);
+    }
+
+    return count;
+  }
+
+  private countNestedValues(obj: NestedRelativeImports): number {
+    let count = 0;
+
+    for (const value of Object.values(obj)) {
+      if (typeof value === "string") {
+        count++;
+      } else {
+        count += this.countNestedValues(value);
+      }
+    }
+
+    return count;
+  }
+
+  private saveManifest(manifest: CompleteManifest): void {
+    const manifestContent = JSON.stringify(manifest, null, 2);
+    fs.writeFileSync(this.manifestPath, manifestContent);
+
+    console.log(`📄 Updated manifest: ${this.manifestPath}`);
+
+    const totalRelativeMappings = this.countNestedMappings(
+      manifest.relativeImports
+    );
+    console.log(
+      `   Contains ${totalRelativeMappings} relative import mappings across ${
+        Object.keys(manifest.relativeImports).length
+      } dependencies`
+    );
+  }
+
+  private extractPackageNameFromUrl(url: string): string {
+    const urlObj = new URL(url);
+    const pathParts = urlObj.pathname.split("/").filter((p) => p);
+
+    if (urlObj.hostname === "esm.sh") {
+      if (pathParts.length > 0) {
+        const packagePart = pathParts[0];
+
+        // Handle scoped packages like @emotion/is-prop-valid@1.4.0
+        if (packagePart.startsWith("@") && pathParts.length > 1) {
+          const scopePart = packagePart;
+          const namePart = pathParts[1];
+
+          // Extract just the package name without version
+          const nameWithoutVersion = namePart.split("@")[0];
+          return `${scopePart}/${nameWithoutVersion}`;
+        } else {
+          // Handle regular packages like react@19.2.0
+          const nameWithoutVersion = packagePart.split("@")[0];
+          return nameWithoutVersion;
+        }
+      }
+    }
+
+    throw new Error(`Cannot extract package name from URL: ${url}`);
+  }
+
+  private extractVersionFromUrl(url: string): string | null {
+    // For scoped packages like @emotion/is-prop-valid@1.4.0, match the version after the second @
+    // For regular packages like react@19.2.0, match the version after the first @
+
+    // First try to match scoped package pattern: @scope/package@version
+    const scopedMatch = url.match(/@[^/]+\/[^@/]+@([^/?#]+)/);
+    if (scopedMatch) {
+      return scopedMatch[1];
+    }
+
+    // Then try regular package pattern: package@version (but not for scoped packages)
+    if (!url.includes("/@")) {
+      const regularMatch = url.match(/\/([^/@]+)@([^/?#]+)/);
+      if (regularMatch) {
+        return regularMatch[2];
+      }
+    }
+
+    return null;
+  }
+}
+
+// CLI usage
+if (require.main === module) {
+  const processor = new RelativeImportProcessor();
+  processor
+    .processRelativeImports()
+    .then(() => {
+      console.log("✅ Relative import processing completed successfully!");
+    })
+    .catch((error) => {
+      console.error("❌ Processing failed:", error);
+      process.exit(1);
+    });
+}

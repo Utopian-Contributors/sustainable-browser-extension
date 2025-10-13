@@ -1,0 +1,12 @@
+{
+  "packages": {
+    "react": "https://esm.sh/react@{version}",
+    "react-dom": "https://esm.sh/react-dom@{version}",
+    "lucide-react": "https://esm.sh/lucide-react@{version}",
+    "clsx": "https://esm.sh/clsx@{version}",
+    "tailwind-merge": "https://esm.sh/tailwind-merge@{version}"
+  },
+  "sameVersionRequired": [
+    ["react", "react-dom"]
+  ]
+}

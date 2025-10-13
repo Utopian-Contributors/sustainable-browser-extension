@@ -1,0 +1,1 @@
+window.__SUSTAINABLE_BUILD__ = true;
