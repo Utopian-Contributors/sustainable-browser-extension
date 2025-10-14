@@ -209,7 +209,16 @@ export class RelativeImportProcessor {
     // Create nested mappings for relative imports to their resolved absolute URLs
     for (const [parentUrl, depInfo] of this.downloadedDeps.entries()) {
       const originalImports = depInfo.imports; // Use the raw imports we extracted
-      const depKey = `${depInfo.name}@${depInfo.version}`;
+      
+      // Build dep key with peer context if it exists
+      let depKey = `${depInfo.name}@${depInfo.version}`;
+      if (depInfo.peerContext && Object.keys(depInfo.peerContext).length > 0) {
+        // Add peer context to the key: framer-motion@12.23.23_react-19.2.0
+        const peerContextSuffix = Object.entries(depInfo.peerContext)
+          .map(([name, version]) => `${name}-${version}`)
+          .join("_");
+        depKey = `${depKey}_${peerContextSuffix}`;
+      }
 
       console.log(
         `  🔍 Processing ${depKey} (${originalImports.length} imports)`
@@ -263,21 +272,31 @@ export class RelativeImportProcessor {
             }
 
             if (!matchedUrl) {
-              // Debug log for troubleshooting
-              console.log(
-                `    ⚠️  No match for relative import ${relativeImport} from ${depInfo.name}@${depInfo.version}`
-              );
-              console.log(`         Resolved to: ${absoluteUrl}`);
-              console.log(
-                `         Expected contextual: ${
+              // Fail loudly with detailed error information
+              const errorMsg = [
+                `❌ No match found for relative import "${relativeImport}"`,
+                `   From: ${depInfo.name}@${depInfo.version}`,
+                `   Resolved to: ${absoluteUrl}`,
+                `   Expected contextual: ${
                   Object.keys(currentPeerContext).length > 0
                     ? absoluteUrl +
                       "?" +
                       this.createSimplifiedPeerContextQuery(currentPeerContext)
-                    : "none"
-                }`
+                    : "none (no peer context)"
+                }`,
+                `   Available URLs with same base:`,
+              ].join("\n");
+
+              const baseUrl = absoluteUrl.split("?")[0];
+              const availableUrls = this.baseUrlToContextualUrls.get(baseUrl) || [];
+              console.error(errorMsg);
+              availableUrls.forEach((url) => {
+                console.error(`     - ${url}`);
+              });
+
+              throw new Error(
+                `Failed to resolve relative import "${relativeImport}" from ${depInfo.name}@${depInfo.version}`
               );
-              continue; // Skip this import instead of throwing
             }
 
             // Initialize the dependency group if it doesn't exist
@@ -287,26 +306,33 @@ export class RelativeImportProcessor {
 
             // Convert the resolved absolute URL to a path within the package structure
             const packagePath = this.extractPackagePath(
-              absoluteUrl,
+              matchedUrl,
               depInfo.name
             );
-            if (packagePath) {
-              // Create nested structure using the absolute package path, not the relative path
-              // Use the original absoluteUrl (without peer context) as the target
-              this.setNestedPath(
-                this.relativeImportMappings[depKey],
-                packagePath,
-                absoluteUrl
-              );
-              console.log(
-                `    📁 Mapped: ${relativeImport} -> ${packagePath} = ${absoluteUrl}`
+            if (!packagePath) {
+              throw new Error(
+                `Failed to extract package path from "${matchedUrl}" for package "${depInfo.name}"`
               );
             }
-          } catch (error) {
-            // Skip problematic relative imports
-            console.log(
-              `    ⚠️  Error processing relative import ${relativeImport} from ${depInfo.name}@${depInfo.version}: ${error}`
+
+            // Create nested structure using the absolute package path
+            // Use the matchedUrl (which includes peer context) as the target
+            this.setNestedPath(
+              this.relativeImportMappings[depKey],
+              packagePath,
+              matchedUrl
             );
+            console.log(
+              `    📁 Mapped: ${relativeImport} -> ${packagePath} = ${matchedUrl}`
+            );
+          } catch (error) {
+            // Fail loudly on any error
+            const errorMsg = error instanceof Error ? error.message : String(error);
+            console.error(
+              `\n❌ Fatal error processing relative import "${relativeImport}" from ${depInfo.name}@${depInfo.version}:`
+            );
+            console.error(`   ${errorMsg}\n`);
+            throw error;
           }
         }
       }

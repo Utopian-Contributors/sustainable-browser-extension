@@ -50,8 +50,9 @@ export class DependencyImportProcessor {
       filesWithImports++;
       console.log(`📄 ${filename} (${originalImports.length} imports):`);
 
-      // Extract dependency name+version from filename to find the correct relative imports group
-      const depNameVersion = this.extractDepNameVersionFromFilename(filename);
+      // Extract dependency name+version and peer context from filename to find the correct relative imports group
+      const depFilenameInfo = this.extractDepNameVersionWithPeerContextFromFilename(filename);
+      const depNameVersion = depFilenameInfo ? depFilenameInfo[0] : null;
 
       let modified = false;
 
@@ -84,9 +85,10 @@ export class DependencyImportProcessor {
 
           // If no exact match, try equivalent import matching (with version constraint handling)
           if (!matchingUrl) {
-            matchingUrl = Object.keys(this.manifest.dependencies).find(
-              (url) => this.isEquivalentImport(originalImport, url)
-            ) || null;
+            matchingUrl =
+              Object.keys(this.manifest.dependencies).find((url) =>
+                this.isEquivalentImport(originalImport, url)
+              ) || null;
           }
 
           if (matchingUrl && this.manifest.dependencies[matchingUrl]) {
@@ -95,6 +97,9 @@ export class DependencyImportProcessor {
             console.log(`  - absolute: "${originalImport}" → "${newImport}"`);
           } else {
             console.log(`  - absolute: "${originalImport}" (no mapping found)`);
+            throw new Error(
+              `No mapping found for absolute import: ${originalImport}`
+            );
           }
         } else if (
           originalImport.startsWith("./") ||
@@ -102,6 +107,8 @@ export class DependencyImportProcessor {
         ) {
           // Replace relative imports with dependency paths using manifest
           let absoluteUrl: string | null = null;
+
+          console.debug(filename, depNameVersion, originalImport);
 
           // Look up relative import in the nested dependency structure
           if (depNameVersion && this.manifest.relativeImports[depNameVersion]) {
@@ -115,6 +122,7 @@ export class DependencyImportProcessor {
               const errorMessage =
                 error instanceof Error ? error.message : String(error);
               console.log(`  🔍 Failed to resolve: ${errorMessage}`);
+              throw error; // Re-throw to fail fast and help with debugging
             }
           }
 
@@ -127,6 +135,9 @@ export class DependencyImportProcessor {
               `  - relative: "${originalImport}" (no mapping found${
                 depNameVersion ? ` for ${depNameVersion}` : ""
               })`
+            );
+            throw new Error(
+              `No mapping found for relative import: ${originalImport}`
             );
           }
         }
@@ -263,11 +274,42 @@ export class DependencyImportProcessor {
     return match ? match[1] : null;
   }
 
-  private extractDepNameVersionFromFilename(filename: string): string | null {
-    // Extract dependency name+version from filename like "react@19.2.0_165279c2.js"
-    // Format is: packagename@version_hash.js
-    const match = filename.match(/^(.+@[^_]+)_[^.]+\.js$/);
-    return match ? match[1] : null;
+  private extractDepNameVersionWithPeerContextFromFilename(filename: string): [string, string[]] | null {
+    // Format is: packagename@version_peercontext_hash.js or packagename@version_hash.js
+    // Returns [packageName@version, [peer@version, ...]] or null
+    // Examples:
+    //   "framer-motion@10.16.16_react-18.1.0_006ab095.js" -> ["framer-motion@10.16.16", ["react@18.1.0"]]
+    //   "react@19.2.0_165279c2.js" -> ["react@19.2.0", []]
+    
+    // Match pattern: packagename@version followed by underscore
+    // Package name can include scope (e.g., @emotion/is-prop-valid)
+    const match = filename.match(/^(@?[^@]+@[\d.]+)_(.*?)_([^_]+)\.js$/);
+    if (!match) return null;
+    
+    const packageNameVersion = match[1];
+    const peerContextPart = match[2];
+    
+    // Parse peer context if it exists
+    const peerDependencies: string[] = [];
+    if (peerContextPart) {
+      // Split by underscore and look for package@version patterns
+      // Handle both regular (react-18.1.0) and scoped packages (@emotion-is-prop-valid-1.4.0)
+      const parts = peerContextPart.split('_');
+      
+      for (const part of parts) {
+        // Convert dash-separated format back to @-separated format
+        // "react-18.1.0" -> "react@18.1.0"
+        // Note: We need to be careful with scoped packages that start with @
+        const atMatch = part.match(/^(.+)-([\d.]+)$/);
+        if (atMatch) {
+          const pkgName = atMatch[1].replace(/-/g, '/'); // Handle scoped packages: @emotion-is-prop-valid -> @emotion/is-prop-valid
+          const version = atMatch[2];
+          peerDependencies.push(`${pkgName}@${version}`);
+        }
+      }
+    }
+    
+    return [packageNameVersion, peerDependencies];
   }
 
   private isEquivalentImport(importPath: string, manifestUrl: string): boolean {
@@ -365,15 +407,16 @@ export class DependencyImportProcessor {
 
       const absoluteUrl = new URL(relativePath, baseUrl).href;
 
-      // Step 3: Extract package-relative path from the absolute URL
-      const depNameVersion =
-        this.extractDepNameVersionFromFilename(currentFilename);
-      if (!depNameVersion) {
+      // Step 3: Extract package-name from the filename
+      const depFilenameInfo =
+        this.extractDepNameVersionWithPeerContextFromFilename(currentFilename);
+      if (!depFilenameInfo) {
         throw new Error(
           `Cannot extract dependency name+version from filename ${currentFilename}`
         );
       }
 
+      const depNameVersion = depFilenameInfo[0];
       const packageName = depNameVersion.split("@")[0];
       const packagePath = this.extractPackagePathFromUrl(
         absoluteUrl,
@@ -446,14 +489,6 @@ export class DependencyImportProcessor {
           if (packagePart.startsWith(expectedPrefix)) {
             // Get everything after the package@version part
             const remainingParts = pathParts.slice(1);
-
-            // Skip the target part (e.g., "es2022") if present
-            if (
-              remainingParts.length > 0 &&
-              remainingParts[0].match(/^es\d{4}$/)
-            ) {
-              remainingParts.shift();
-            }
 
             // The remaining path is the package-relative path
             return remainingParts.join("/");

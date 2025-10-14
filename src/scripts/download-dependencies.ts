@@ -83,6 +83,9 @@ export class DependencyDownloader {
     console.log("🔄 Creating peer dependency permutations...");
     await this.downloadWithPeerPermutations();
 
+    // Step 3: Clean-up base versions that don't have peer dependency context, but should
+    await this.cleanupBaseVersions();
+
     // Save manifest
     console.log("\n📄 Saving final manifest...");
     this.saveManifest();
@@ -202,7 +205,6 @@ export class DependencyDownloader {
           `  Downloading base version for ${depName}@${packageInfo.version}...`
         );
         const baseDepInfo = await this.downloadDependency(url);
-        baseVersionsDownloaded.set(versionKey, baseDepInfo);
 
         // If this package is part of a sameVersionRequired group,
         // also download the other packages in the group
@@ -261,9 +263,6 @@ export class DependencyDownloader {
               }
             }
           }
-
-          console.log("\n🧹 Cleaning up base versions without peer context...");
-          this.cleanupBaseVersions(baseVersionsDownloaded);
         }
       }
     }
@@ -334,44 +333,81 @@ export class DependencyDownloader {
     }
   }
 
-  private cleanupBaseVersions(
-    baseVersionsDownloaded: Map<string, DependencyInfo>
-  ): void {
+  private cleanupBaseVersions(): void {
+    console.log("\n🧹 Cleaning up base versions without peer context...");
+    
     let cleanedCount = 0;
+    const filesToDelete: string[] = [];
 
-    for (const [versionKey, baseDepInfo] of baseVersionsDownloaded.entries()) {
-      if (
-        baseDepInfo.peerContext &&
-        Object.keys(baseDepInfo.peerContext).length > 0
-      ) {
-        const nonSameVersionPeer = this.findPrimaryPeer(
-          baseDepInfo.peerContext || {}
-        );
-        if (nonSameVersionPeer) {
-          console.debug(
-            `  🧹 Cleaning up peer context for: ${baseDepInfo.url}`
-          );
-          // Remove from downloadedDeps
-          this.downloadedDeps.delete(baseDepInfo.url);
+    // Get all files in the output directory
+    const files = fs.readdirSync(this.outputDir);
+    const jsFiles = files.filter((f) => f.endsWith(".js"));
 
-          // Remove from dependencyManifest if present
-          if (this.dependencyManifest[baseDepInfo.url]) {
-            const filename = this.dependencyManifest[baseDepInfo.url];
-            delete this.dependencyManifest[baseDepInfo.url];
+    // Build a set of packages that should have peer context
+    const packagesShouldHavePeerContext = new Set<string>();
+    
+    for (const [depName, packageInfoList] of this.packageInfoCache.entries()) {
+      for (const packageInfo of packageInfoList) {
+        if (
+          packageInfo.peerDependencies &&
+          Object.keys(packageInfo.peerDependencies).length > 0
+        ) {
+          // This package+version should have peer context
+          packagesShouldHavePeerContext.add(`${depName}@${packageInfo.version}`);
+        }
+      }
+    }
 
-            // Delete the file from disk
-            const filePath = path.join(this.outputDir, filename);
-            if (fs.existsSync(filePath)) {
-              fs.unlinkSync(filePath);
-              console.log(`  🗑️  Removed base version: ${filename}`);
-              cleanedCount++;
-            }
+    // Check each file to see if it should have peer context but doesn't
+    for (const filename of jsFiles) {
+      // Extract package name and version from filename
+      // Format: packagename@version_hash.js or packagename@version_peercontext_hash.js
+      const match = filename.match(/^(@?[^@]+@[\d.]+)_(.+?)_([^_]+)\.js$/);
+      
+      if (match) {
+        const packageNameVersion = match[1];
+        const middlePart = match[2];
+        
+        // Check if this file has peer context (middlePart contains peer dependency info)
+        // If middlePart looks like a hash (8 hex chars), then this file has no peer context
+        const hasPeerContext = !/^[0-9a-f]{8}$/i.test(middlePart);
+        
+        if (!hasPeerContext && packagesShouldHavePeerContext.has(packageNameVersion)) {
+          // This file should have peer context but doesn't - mark for deletion
+          filesToDelete.push(filename);
+        }
+      } else {
+        // Try simpler pattern without middle part: packagename@version_hash.js
+        const simpleMatch = filename.match(/^(@?[^@]+@[\d.]+)_([^_]+)\.js$/);
+        if (simpleMatch) {
+          const packageNameVersion = simpleMatch[1];
+          
+          if (packagesShouldHavePeerContext.has(packageNameVersion)) {
+            // This file should have peer context but doesn't - mark for deletion
+            filesToDelete.push(filename);
           }
         }
       }
     }
 
-    console.log(`  ✅ Cleaned up ${cleanedCount} base v ersion files`);
+    // Delete the identified files
+    for (const filename of filesToDelete) {
+      const filePath = path.join(this.outputDir, filename);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+        console.log(`  🗑️  Removed: ${filename}`);
+        cleanedCount++;
+        
+        // Also remove from manifest if present
+        for (const [url, manifestFilename] of Object.entries(this.dependencyManifest)) {
+          if (manifestFilename === filename) {
+            delete this.dependencyManifest[url];
+          }
+        }
+      }
+    }
+
+    console.log(`  ✅ Cleaned up ${cleanedCount} base version files`);
   }
 
   private async getPeerDependencies(
@@ -457,7 +493,7 @@ export class DependencyDownloader {
     );
 
     if (Object.keys(validPeerDeps).length === 0) {
-      return [{}]; // No valid peer dependencies
+      return []; // No valid peer dependencies
     }
 
     // Group peer dependencies by sameVersionRequired groups
@@ -561,7 +597,7 @@ export class DependencyDownloader {
       permutations.push(peerContext);
     }
 
-    return permutations.length > 0 ? permutations : [{}];
+    return permutations.length > 0 ? permutations : [];
   }
 
   private calculatePermutationCount(
@@ -1046,10 +1082,6 @@ export class DependencyDownloader {
       manifestKey = peerQuery ? `${originalUrl}?${peerQuery}` : originalUrl;
     } else {
       manifestKey = depInfo.url.split("?")[0]; // Clean URL without context
-    }
-
-    if (!depInfo.isLeaf) {
-      console.debug(depInfo.url); // debugging wrapper files
     }
 
     // Add to manifest (URL with peer context -> filename mapping)
