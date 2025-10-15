@@ -13,7 +13,7 @@
     "resolveJsonModule": true,
     "moduleResolution": "node"
   },
-  "include": ["src/extension/**/*", "src/types/declarations.d.ts"],
+  "include": ["src/extension/**/*", "src/extension/injected.js"],
   "exclude": [
     "node_modules",
     "dist",

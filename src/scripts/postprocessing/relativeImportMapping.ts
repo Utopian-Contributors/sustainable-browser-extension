@@ -36,7 +36,7 @@ export class RelativeImportProcessor {
   private baseUrlToContextualUrls: Map<string, string[]> = new Map();
   private manifestPath: string;
 
-  constructor(manifestPath: string = "./dependencies/manifest.json") {
+  constructor(manifestPath: string = "./dependencies/index.lookup.json") {
     this.manifestPath = manifestPath;
   }
 

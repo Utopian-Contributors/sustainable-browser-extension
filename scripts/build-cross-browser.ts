@@ -38,14 +38,14 @@ function copyFile(src: string, dest: string) {
 
 function generateDeclarativeNetRequestRules(): any[] {
   console.log(
-    "🔧 Generating declarativeNetRequest rules from manifest.json..."
+    "🔧 Generating declarativeNetRequest rules from index.lookup.json..."
   );
 
-  const manifestPath = path.join(PROJECT_ROOT, "dependencies", "manifest.json");
+  const manifestPath = path.join(PROJECT_ROOT, "dependencies", "index.lookup.json");
 
   if (!fs.existsSync(manifestPath)) {
     console.warn(
-      "⚠️  No dependencies/manifest.json found. Skipping rule generation."
+      "⚠️  No dependencies/index.lookup.json found. Skipping rule generation."
     );
     return [];
   }
@@ -202,7 +202,7 @@ function copyCommonFiles(targetDir: string) {
     path.join(targetDir, "popup.html")
   );
 
-  // Generate and save declarativeNetRequest rules from dependencies/manifest.json
+  // Generate and save declarativeNetRequest rules from dependencies/index.lookup.json
   console.log("  📋 Generating declarativeNetRequest rules...");
   const rules = generateDeclarativeNetRequestRules();
   const rulesPath = path.join(targetDir, "rules.json");
@@ -217,16 +217,21 @@ function copyCommonFiles(targetDir: string) {
     console.log("  📦 Copying dependencies folder...");
     copyDirectory(depsSourceDir, depsTargetDir);
 
-    // Count files (excluding manifest.json)
+    // Count files (excluding index.lookup.json)
     const depFiles = fs
       .readdirSync(depsTargetDir)
-      .filter((f) => f !== "manifest.json");
+      .filter((f) => f !== "index.lookup.json");
     console.log(`  ✅ Copied ${depFiles.length} dependency files`);
   } else {
     console.warn(
       "  ⚠️  No dependencies folder found. Run yarn download-deps first."
     );
   }
+
+  // Copy icons folder
+  const iconsSourceDir = path.join(PROJECT_ROOT, "icons");
+  const iconsTargetDir = path.join(targetDir, "icons");
+  copyDirectory(iconsSourceDir, iconsTargetDir);
 }
 
 function copyDirectory(source: string, target: string) {
@@ -359,6 +364,12 @@ function buildFirefox() {
   // Copy common files
   copyCommonFiles(FIREFOX_DIR);
 
+  // Copy injected script
+  fs.copyFileSync(
+    path.join(PROJECT_ROOT, "src", "extension", "injected.js"),
+    path.join(FIREFOX_DIR, "injected.js")
+  );
+
   // Generate Firefox manifest
   const firefoxManifest = createFirefoxManifest();
   fs.writeFileSync(
@@ -391,10 +402,6 @@ function validateBuild(targetDir: string, browser: string) {
   
   if (!fs.existsSync(backgroundPath)) {
     issues.push("background.js missing");
-  }
-
-  if (!fs.existsSync(path.join(targetDir, "popup.js"))) {
-    issues.push("popup.js missing");
   }
 
   if (!fs.existsSync(dependenciesPath)) {
@@ -431,7 +438,7 @@ function printInstructions() {
   console.log(
     `  4. Select: ${path.relative(
       PROJECT_ROOT,
-      path.join(FIREFOX_DIR, "manifest.json")
+      path.join(FIREFOX_DIR, "index.lookup.json")
     )}`
   );
   console.log("");
@@ -499,7 +506,6 @@ function main() {
 
     // Create webstore package if requested
     if (createWebstorePackage) {
-      console.log("");
       buildWebstorePackage();
     }
 

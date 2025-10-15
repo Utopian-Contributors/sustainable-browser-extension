@@ -61,7 +61,7 @@ export class DependencyDownloader {
   constructor(mappingsPath: string, outputDir: string = "./dependencies") {
     this.cdnMappings = JSON.parse(fs.readFileSync(mappingsPath, "utf8"));
     this.outputDir = outputDir;
-    this.manifestPath = path.join(outputDir, "manifest.json");
+    this.manifestPath = path.join(outputDir, "index.lookup.json");
     this.ensureOutputDir();
   }
 

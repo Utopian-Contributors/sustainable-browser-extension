@@ -1,181 +1,43 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Sustainable Browser</title>
     <style>
-        body {
-            width: 300px;
-            min-height: 400px;
-            margin: 0;
-            padding: 16px;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #f8f9fa;
-        }
-        
-        .header {
-            text-align: center;
-            margin-bottom: 20px;
-        }
-        
-        .header h1 {
-            margin: 0;
-            font-size: 18px;
-            color: #2c3e50;
-        }
-        
-        .stats {
-            background: white;
-            border-radius: 8px;
-            padding: 16px;
-            margin-bottom: 16px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        
-        .stat-item {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 8px;
-        }
-        
-        .stat-item:last-child {
-            margin-bottom: 0;
-        }
-        
-        .stat-label {
-            color: #666;
-            font-size: 14px;
-        }
-        
-        .stat-value {
-            font-weight: bold;
-            color: #27ae60;
-        }
-        
-        .actions {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
-        
-        button {
-            padding: 10px 16px;
-            border: none;
-            border-radius: 6px;
-            font-size: 14px;
-            cursor: pointer;
-            transition: background-color 0.2s;
-        }
-        
-        .primary {
-            background: #3498db;
-            color: white;
-        }
-        
-        .primary:hover {
-            background: #2980b9;
-        }
-        
-        .secondary {
-            background: #95a5a6;
-            color: white;
-        }
-        
-        .secondary:hover {
-            background: #7f8c8d;
-        }
-        
-        .status {
-            text-align: center;
-            margin-top: 16px;
-            padding: 8px;
-            border-radius: 4px;
-            font-size: 12px;
-        }
-        
-        .status.active {
-            background: #d4edda;
-            color: #155724;
-        }
-        
-        .status.inactive {
-            background: #f8d7da;
-            color: #721c24;
-        }
-        
-        .recent-intercepts {
-            margin-top: 16px;
-        }
-        
-        .recent-intercepts h3 {
-            margin: 0 0 8px 0;
-            font-size: 14px;
-            color: #2c3e50;
-        }
-        
-        .intercept-item {
-            background: white;
-            padding: 8px;
-            margin-bottom: 4px;
-            border-radius: 4px;
-            font-size: 12px;
-            border-left: 3px solid #27ae60;
-        }
-        
-        .intercept-url {
-            font-family: monospace;
-            color: #666;
-            word-break: break-all;
-        }
+      body {
+        width: 300px;
+        margin: 0;
+        padding: 16px;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          sans-serif;
+        background: #f8f9fa;
+      }
+
+      .header {
+        text-align: center;
+    }
+    
+    .header h1 {
+        font-size: 18px;
+        color: #2c3e50;
+        margin-bottom: 20px;
+      }
+
+      .header a {
+        color: darkgreen;
+        text-align: center;
+      }
     </style>
-</head>
-<body>
+  </head>
+  <body>
     <div class="header">
-        <h1>🌱 Sustainable Browser</h1>
+      <h1>🌱 Sustainable Browser</h1>
+      <a
+        href="https://github.com/Utopian-Contributors/vite-sustainable/issues"
+        target="_blank"
+        >Submit a bug/issue</a
+      >
     </div>
-    
-    <div class="stats">
-        <div class="stat-item">
-            <span class="stat-label">Dependencies Available:</span>
-            <span class="stat-value" id="cached-count">0</span>
-        </div>
-        <div class="stat-item">
-            <span class="stat-label">Requests Intercepted:</span>
-            <span class="stat-value" id="intercepted-count">0</span>
-        </div>
-        <div class="stat-item">
-            <span class="stat-label">Rules Created:</span>
-            <span class="stat-value" id="rules-count">0</span>
-        </div>
-        <div class="stat-item">
-            <span class="stat-label">Browser:</span>
-            <span class="stat-value" id="browser-info">Unknown</span>
-        </div>
-    </div>
-    
-    <div class="actions">
-        <button class="secondary" id="view-debug">Debug Info</button>
-    </div>
-    
-    <div class="status active" id="status">
-        Extension Active
-    </div>
-    
-    <div class="recent-intercepts">
-        <h3>Recent Intercepts</h3>
-        <div id="intercept-list">
-            <div class="intercept-item">
-                <div class="intercept-url">No recent intercepts</div>
-            </div>
-        </div>
-    </div>
-    
-    <div class="recent-intercepts" id="debug-section" style="display: none;">
-        <h3>Debug Information</h3>
-        <div id="debug-info" style="font-family: monospace; font-size: 11px; background: #f5f5f5; padding: 8px; border-radius: 4px; white-space: pre-wrap;"></div>
-    </div>
-    
-    <script src="popup.js"></script>
-</body>
+  </body>
 </html>

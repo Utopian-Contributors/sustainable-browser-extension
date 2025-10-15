@@ -1,6 +1,6 @@
 {
   "name": "sustainable-browser-extension",
-  "version": "1.0.0",
+  "version": "0.0.1",
   "description": "A browser extension that intercepts CDN requests and serves local dependencies",
   "main": "dist/index.js",
   "scripts": {
@@ -11,6 +11,7 @@
     "download:deps": "rimraf dependencies && ts-node --project tsconfig.scripts.json src/scripts/download-dependencies.ts",
     "process:imports": "ts-node --project tsconfig.scripts.json src/scripts/postprocessing/importTransforming.ts",
     "process:import-mapping": "ts-node --project tsconfig.scripts.json src/scripts/postprocessing/relativeImportMapping.ts",
+    "export:available": "ts-node --project tsconfig.scripts.json src/scripts/export-dependencies.ts",
     "build-cross-browser": "ts-node --project tsconfig.scripts.json scripts/build-cross-browser.ts",
     "build-webstore": "ts-node --project tsconfig.scripts.json scripts/build-cross-browser.ts --webstore",
     "dev": "yarn build:watch",

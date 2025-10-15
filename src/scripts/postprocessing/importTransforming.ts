@@ -17,7 +17,7 @@ export class DependencyImportProcessor {
   private outputDir: string;
 
   constructor(
-    manifestPath: string = "./dependencies/manifest.json",
+    manifestPath: string = "./dependencies/index.lookup.json",
     outputDir: string = "./dependencies"
   ) {
     this.outputDir = outputDir;
