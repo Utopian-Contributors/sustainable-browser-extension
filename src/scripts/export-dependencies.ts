@@ -1,20 +1,22 @@
 import * as fs from "fs";
+import { AnalyzedDependency } from "./analyze-dependencies";
 
-interface CompleteManifest {
+interface CompleteIndexLookup {
   dependencies: { [esmUrl: string]: string };
   relativeImports: any;
   availableVersions: { [packageName: string]: string[] };
+  packages: AnalyzedDependency[];
 }
 
 export class DependencyExporter {
-  private manifestPath: string;
+  private lookupIndexPath: string;
   private outputPath: string;
 
   constructor(
-    manifestPath: string = "./dependencies/index.lookup.json",
-    outputPath: string = "./manifest.export.json"
+    lookupIndexPath: string = "./dependencies/index.lookup.json",
+    outputPath: string = "./cdn-exports.json"
   ) {
-    this.manifestPath = manifestPath;
+    this.lookupIndexPath = lookupIndexPath;
     this.outputPath = outputPath;
   }
 
@@ -22,22 +24,32 @@ export class DependencyExporter {
     console.log("📦 Exporting available versions...");
 
     // Step 1: Open index.lookup.json
-    if (!fs.existsSync(this.manifestPath)) {
-      throw new Error(`Manifest file not found: ${this.manifestPath}`);
+    if (!fs.existsSync(this.lookupIndexPath)) {
+      throw new Error(`Manifest file not found: ${this.lookupIndexPath}`);
     }
 
-    const manifestContent = fs.readFileSync(this.manifestPath, "utf8");
-    const manifest: CompleteManifest = JSON.parse(manifestContent);
+    const lookupIndexContent = fs.readFileSync(this.lookupIndexPath, "utf8");
+    const lookupIndex: CompleteIndexLookup = JSON.parse(lookupIndexContent);
 
     // Step 2: Read the "availableVersions" key
-    const availableVersions = manifest.availableVersions || {};
+    const availableVersions = lookupIndex.availableVersions || {};
+    const packages = lookupIndex.packages.map((pkg) => {
+      const { depth, peerDependencies, ...rest } = pkg;
+      return rest;
+    });
 
     console.log(
-      `📊 Found ${Object.keys(availableVersions).length} packages with available versions`
+      `📊 Found ${
+        Object.keys(availableVersions).length
+      } packages with available versions`
     );
 
-    // Step 3: Write to manifest.export.json
-    const exportContent = JSON.stringify(availableVersions, null, 2);
+    // Step 3: Write to cdn-exports.json
+    const exportContent = JSON.stringify(
+      { availableVersions, packages },
+      null,
+      2
+    );
     fs.writeFileSync(this.outputPath, exportContent);
 
     console.log(`✅ Exported to: ${this.outputPath}`);

@@ -24,8 +24,18 @@ interface NestedRelativeImports {
   [pathSegment: string]: NestedRelativeImports | string;
 }
 
+interface AnalyzedDependency {
+  name: string;
+  version: string;
+  url: string;
+  peerContext?: { [peerName: string]: string };
+  peerDependencies?: { [packageName: string]: string };
+  depth: number;
+}
+
 interface CompleteManifest {
-  dependencies: LeafManifest;
+  packages: AnalyzedDependency[];
+  urlToFile: LeafManifest;
   relativeImports: RelativeImportMapping;
   availableVersions: { [packageName: string]: string[] };
 }
@@ -35,9 +45,15 @@ export class RelativeImportProcessor {
   private relativeImportMappings: RelativeImportMapping = {};
   private baseUrlToContextualUrls: Map<string, string[]> = new Map();
   private manifestPath: string;
+  private cdnMappingsPath: string;
+  private sameVersionRequired: string[][] = [];
 
-  constructor(manifestPath: string = "./dependencies/index.lookup.json") {
+  constructor(
+    manifestPath: string = "./dependencies/index.lookup.json",
+    cdnMappingsPath: string = "./cdn-mappings.json"
+  ) {
     this.manifestPath = manifestPath;
+    this.cdnMappingsPath = cdnMappingsPath;
   }
 
   async processRelativeImports(): Promise<void> {
@@ -45,6 +61,8 @@ export class RelativeImportProcessor {
 
     // Load existing manifest
     const manifest = this.loadManifest();
+    const cdnMappings = this.loadCdnMappings();
+    this.sameVersionRequired = cdnMappings.sameVersionRequired || [];
 
     // Rebuild downloadedDeps from the files
     console.log("📚 Rebuilding dependency information from files...");
@@ -74,14 +92,21 @@ export class RelativeImportProcessor {
     return JSON.parse(manifestContent);
   }
 
+  private loadCdnMappings(): { sameVersionRequired: string[][] } {
+    if (!fs.existsSync(this.cdnMappingsPath)) {
+      throw new Error(`CDN mappings not found at ${this.cdnMappingsPath}`);
+    }
+
+    const cdnContent = fs.readFileSync(this.cdnMappingsPath, "utf8");
+    return JSON.parse(cdnContent);
+  }
+
   private async rebuildDependencyInfo(): Promise<void> {
     const manifest = this.loadManifest();
     const dependenciesDir = path.dirname(this.manifestPath);
 
-    // Read all dependency files and reconstruct DependencyInfo
-    for (const [esmUrl, filename] of Object.entries(
-      manifest.dependencies
-    )) {
+    // Iterate through all urlToFile entries to load all downloaded files
+    for (const [esmUrl, filename] of Object.entries(manifest.urlToFile)) {
       const filePath = path.join(dependenciesDir, filename);
 
       if (fs.existsSync(filePath)) {
@@ -91,7 +116,7 @@ export class RelativeImportProcessor {
         const name = this.extractPackageNameFromUrl(esmUrl);
         const version = this.extractVersionFromUrl(esmUrl) || "latest";
 
-        // Extract peer context from URL
+        // Extract peer context from URL query parameters
         const peerContext = this.extractPeerContextFromUrl(esmUrl);
 
         // Extract all imports from this file
@@ -102,17 +127,36 @@ export class RelativeImportProcessor {
           version,
           url: esmUrl,
           content,
-          imports: rawImports, // Keep raw imports for now
+          imports: rawImports,
           isLeaf: !this.hasEsmShExports(content),
           peerContext,
         };
 
         this.downloadedDeps.set(esmUrl, depInfo);
         console.log(`  📄 Loaded: ${name}@${version} (${filename})`);
+      } else {
+        console.warn(`  ⚠️  File not found: ${filePath}`);
       }
     }
 
     console.log(`  ✅ Loaded ${this.downloadedDeps.size} dependency files`);
+  }
+
+  private extractPeerContextFromUrl(url: string): {
+    [peerName: string]: string;
+  } {
+    try {
+      const urlObj = new URL(url);
+      const peerContext: { [peerName: string]: string } = {};
+
+      for (const [key, value] of urlObj.searchParams.entries()) {
+        peerContext[key] = value;
+      }
+
+      return peerContext;
+    } catch (error) {
+      return {};
+    }
   }
 
   private extractRawImports(content: string): string[] {
@@ -170,23 +214,6 @@ export class RelativeImportProcessor {
     return false;
   }
 
-  private extractPeerContextFromUrl(url: string): {
-    [peerName: string]: string;
-  } {
-    try {
-      const urlObj = new URL(url);
-      const peerContext: { [peerName: string]: string } = {};
-
-      for (const [key, value] of urlObj.searchParams.entries()) {
-        peerContext[key] = value;
-      }
-
-      return peerContext;
-    } catch (error) {
-      return {};
-    }
-  }
-
   private buildUrlLookupIndex(): void {
     // Build a fast lookup map from base URLs to their contextual URLs
     this.baseUrlToContextualUrls.clear();
@@ -209,14 +236,34 @@ export class RelativeImportProcessor {
     // Create nested mappings for relative imports to their resolved absolute URLs
     for (const [parentUrl, depInfo] of this.downloadedDeps.entries()) {
       const originalImports = depInfo.imports; // Use the raw imports we extracted
-      
+
+      // Find if this package is part of a sameVersionRequired group
+      const sameVersionGroup = (() => {
+        // Load cdn-mappings.json to get sameVersionRequired
+        return this.sameVersionRequired?.find((group: string[]) =>
+          group.includes(depInfo.name)
+        );
+      })();
+
+      const uniquePeerContext = Object.entries(depInfo.peerContext ?? {})
+        .map(([name, version]) => {
+          // Exclude if it's the package itself
+          if (name === depInfo.name) {
+            return false;
+          }
+          // Exclude if it's in the same sameVersionRequired group
+          if (sameVersionGroup && sameVersionGroup.includes(name)) {
+            return false;
+          }
+          return `${name}-${version}`;
+        })
+        .filter(Boolean);
+
       // Build dep key with peer context if it exists
       let depKey = `${depInfo.name}@${depInfo.version}`;
-      if (depInfo.peerContext && Object.keys(depInfo.peerContext).length > 0) {
+      if (uniquePeerContext && uniquePeerContext.length > 0) {
         // Add peer context to the key: framer-motion@12.23.23_react-19.2.0
-        const peerContextSuffix = Object.entries(depInfo.peerContext)
-          .map(([name, version]) => `${name}-${version}`)
-          .join("_");
+        const peerContextSuffix = uniquePeerContext.join("_");
         depKey = `${depKey}_${peerContextSuffix}`;
       }
 
@@ -288,7 +335,8 @@ export class RelativeImportProcessor {
               ].join("\n");
 
               const baseUrl = absoluteUrl.split("?")[0];
-              const availableUrls = this.baseUrlToContextualUrls.get(baseUrl) || [];
+              const availableUrls =
+                this.baseUrlToContextualUrls.get(baseUrl) || [];
               console.error(errorMsg);
               availableUrls.forEach((url) => {
                 console.error(`     - ${url}`);
@@ -327,7 +375,8 @@ export class RelativeImportProcessor {
             );
           } catch (error) {
             // Fail loudly on any error
-            const errorMsg = error instanceof Error ? error.message : String(error);
+            const errorMsg =
+              error instanceof Error ? error.message : String(error);
             console.error(
               `\n❌ Fatal error processing relative import "${relativeImport}" from ${depInfo.name}@${depInfo.version}:`
             );

@@ -41,23 +41,23 @@ function generateDeclarativeNetRequestRules(): any[] {
     "🔧 Generating declarativeNetRequest rules from index.lookup.json..."
   );
 
-  const manifestPath = path.join(PROJECT_ROOT, "dependencies", "index.lookup.json");
+  const lookupIndexPath = path.join(PROJECT_ROOT, "dependencies", "index.lookup.json");
 
-  if (!fs.existsSync(manifestPath)) {
+  if (!fs.existsSync(lookupIndexPath)) {
     console.warn(
       "⚠️  No dependencies/index.lookup.json found. Skipping rule generation."
     );
     return [];
   }
 
-  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  const lookupIndex = JSON.parse(fs.readFileSync(lookupIndexPath, "utf8"));
   const rules: any[] = [];
 
   // Extract dependencies from the nested structure
-  const dependencies = manifest.dependencies || {};
+  const urls = lookupIndex.urlToFile || {};
 
   let ruleId = 1;
-  for (const [esmUrl, localFilename] of Object.entries(dependencies)) {
+  for (const [esmUrl, localFilename] of Object.entries(urls)) {
     // Create a redirect rule for each esm.sh URL -> local file
     rules.push({
       id: ruleId++,
@@ -95,8 +95,6 @@ function createChromeManifest() {
     permissions: [
       "declarativeNetRequest",
       "declarativeNetRequestFeedback", // For debugging intercepted requests
-      "storage",
-      "activeTab",
     ],
     host_permissions: [
       "<all_urls>", // Allow extension to work on all websites
@@ -148,8 +146,6 @@ function createFirefoxManifest() {
       default_title: "Sustainable Browser",
     },
     permissions: [
-      "storage",
-      "activeTab",
       "declarativeNetRequest",
       "declarativeNetRequestFeedback",
     ],

@@ -2,7 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 
 interface Manifest {
-  dependencies: { [esmUrl: string]: string }; // Maps esm.sh URL -> local file path
+  urlToFile: { [esmUrl: string]: string }; // Maps esm.sh URL -> local file path
   relativeImports: {
     [depNameVersion: string]: NestedRelativeImports;
   }; // Maps dependency name+version -> nested relative imports
@@ -51,8 +51,18 @@ export class DependencyImportProcessor {
       console.log(`📄 ${filename} (${originalImports.length} imports):`);
 
       // Extract dependency name+version and peer context from filename to find the correct relative imports group
-      const depFilenameInfo = this.extractDepNameVersionWithPeerContextFromFilename(filename);
-      const depNameVersion = depFilenameInfo ? depFilenameInfo[0] : null;
+      const depFilenameInfo =
+        this.extractDepNameVersionWithPeerContextFromFilename(filename);
+      const baseDepNameVersion = depFilenameInfo ? depFilenameInfo[0] : null;
+      const peerContext = depFilenameInfo ? depFilenameInfo[1] : [];
+
+      // Build the full key including peer context for looking up in relativeImports
+      const depNameVersionKey = baseDepNameVersion
+        ? this.buildDepNameVersionKeyWithPeerContext(
+            baseDepNameVersion,
+            peerContext
+          )
+        : null;
 
       let modified = false;
 
@@ -65,8 +75,8 @@ export class DependencyImportProcessor {
 
         if (originalImport.startsWith("https://esm.sh/")) {
           // Replace absolute esm.sh imports with local dependency files
-          if (this.manifest.dependencies[originalImport]) {
-            const filename = this.manifest.dependencies[originalImport];
+          if (this.manifest.urlToFile[originalImport]) {
+            const filename = this.manifest.urlToFile[originalImport];
             newImport = `/dependencies/${filename}`;
             console.log(`  - esm.sh: "${originalImport}" → "${newImport}"`);
           }
@@ -76,7 +86,7 @@ export class DependencyImportProcessor {
           let matchingUrl: string | null = null;
 
           // First try exact match
-          for (const url of Object.keys(this.manifest.dependencies)) {
+          for (const url of Object.keys(this.manifest.urlToFile)) {
             if (url.includes(originalImport)) {
               matchingUrl = url;
               break;
@@ -85,20 +95,28 @@ export class DependencyImportProcessor {
 
           // If no exact match, try equivalent import matching (with version constraint handling)
           if (!matchingUrl) {
-            matchingUrl =
-              Object.keys(this.manifest.dependencies).find((url) =>
-                this.isEquivalentImport(originalImport, url)
-              ) || null;
+            matchingUrl = this.findBestMatchingUrl(originalImport);
           }
 
-          if (matchingUrl && this.manifest.dependencies[matchingUrl]) {
-            const filename = this.manifest.dependencies[matchingUrl];
+          if (matchingUrl && this.manifest.urlToFile[matchingUrl]) {
+            const filename = this.manifest.urlToFile[matchingUrl];
             newImport = `/dependencies/${filename}`;
             console.log(`  - absolute: "${originalImport}" → "${newImport}"`);
           } else {
             console.log(`  - absolute: "${originalImport}" (no mapping found)`);
             throw new Error(
               `No mapping found for absolute import: ${originalImport}`
+            );
+          }
+          if (originalImport.includes("jsx-runtime")) {
+            console.debug(
+              `Debugging special case for react jsx-runtime import ${JSON.stringify(
+                {
+                  originalImport,
+                  matchingUrl,
+                  newImport,
+                }
+              )}`
             );
           }
         } else if (
@@ -108,14 +126,17 @@ export class DependencyImportProcessor {
           // Replace relative imports with dependency paths using manifest
           let absoluteUrl: string | null = null;
 
-          console.debug(filename, depNameVersion, originalImport);
+          // console.debug(filename, depNameVersionKey, originalImport);
 
-          // Look up relative import in the nested dependency structure
-          if (depNameVersion && this.manifest.relativeImports[depNameVersion]) {
+          // Look up relative import in the nested dependency structure using the full key with peer context
+          if (
+            depNameVersionKey &&
+            this.manifest.relativeImports[depNameVersionKey]
+          ) {
             try {
               absoluteUrl = this.getNestedImportPath(
                 originalImport,
-                this.manifest.relativeImports[depNameVersion],
+                this.manifest.relativeImports[depNameVersionKey],
                 filename
               );
             } catch (error) {
@@ -126,14 +147,14 @@ export class DependencyImportProcessor {
             }
           }
 
-          if (absoluteUrl && this.manifest.dependencies[absoluteUrl]) {
-            const targetFilename = this.manifest.dependencies[absoluteUrl];
+          if (absoluteUrl && this.manifest.urlToFile[absoluteUrl]) {
+            const targetFilename = this.manifest.urlToFile[absoluteUrl];
             newImport = `/dependencies/${targetFilename}`;
             console.log(`  - relative: "${originalImport}" → "${newImport}"`);
           } else {
             console.log(
               `  - relative: "${originalImport}" (no mapping found${
-                depNameVersion ? ` for ${depNameVersion}` : ""
+                depNameVersionKey ? ` for ${depNameVersionKey}` : ""
               })`
             );
             throw new Error(
@@ -274,102 +295,224 @@ export class DependencyImportProcessor {
     return match ? match[1] : null;
   }
 
-  private extractDepNameVersionWithPeerContextFromFilename(filename: string): [string, string[]] | null {
+  private extractDepNameVersionWithPeerContextFromFilename(
+    filename: string
+  ): [string, string[]] | null {
     // Format is: packagename@version_peercontext_hash.js or packagename@version_hash.js
     // Returns [packageName@version, [peer@version, ...]] or null
     // Examples:
     //   "framer-motion@10.16.16_react-18.1.0_006ab095.js" -> ["framer-motion@10.16.16", ["react@18.1.0"]]
     //   "react@19.2.0_165279c2.js" -> ["react@19.2.0", []]
-    
-    // Match pattern: packagename@version followed by underscore
+
+    // Match pattern: packagename@version followed by underscore and hash
     // Package name can include scope (e.g., @emotion/is-prop-valid)
-    const match = filename.match(/^(@?[^@]+@[\d.]+)_(.*?)_([^_]+)\.js$/);
-    if (!match) return null;
-    
-    const packageNameVersion = match[1];
-    const peerContextPart = match[2];
-    
+    // Two patterns:
+    // 1. With peer context: packagename@version_peercontext_hash.js
+    // 2. Without peer context: packagename@version_hash.js
+
+    // Try to match with peer context first
+    let match = filename.match(/^(@?[^@]+@[\d.]+)_(.*?)_([^_]+)\.js$/);
+    let packageNameVersion: string;
+    let peerContextPart: string = "";
+
+    if (match) {
+      // Has peer context
+      packageNameVersion = match[1];
+      peerContextPart = match[2];
+    } else {
+      // Try without peer context (just packagename@version_hash.js)
+      match = filename.match(/^(@?[^@]+@[\d.]+)_([^_]+)\.js$/);
+      if (!match) return null;
+
+      packageNameVersion = match[1];
+      peerContextPart = "";
+    }
+
     // Parse peer context if it exists
     const peerDependencies: string[] = [];
     if (peerContextPart) {
       // Split by underscore and look for package@version patterns
       // Handle both regular (react-18.1.0) and scoped packages (@emotion-is-prop-valid-1.4.0)
-      const parts = peerContextPart.split('_');
-      
+      const parts = peerContextPart.split("_");
+
       for (const part of parts) {
         // Convert dash-separated format back to @-separated format
         // "react-18.1.0" -> "react@18.1.0"
         // Note: We need to be careful with scoped packages that start with @
         const atMatch = part.match(/^(.+)-([\d.]+)$/);
         if (atMatch) {
-          const pkgName = atMatch[1].replace(/-/g, '/'); // Handle scoped packages: @emotion-is-prop-valid -> @emotion/is-prop-valid
+          const pkgName = atMatch[1].replace(/-/g, "/"); // Handle scoped packages: @emotion-is-prop-valid -> @emotion/is-prop-valid
           const version = atMatch[2];
           peerDependencies.push(`${pkgName}@${version}`);
         }
       }
     }
-    
+
     return [packageNameVersion, peerDependencies];
   }
 
-  private isEquivalentImport(importPath: string, manifestUrl: string): boolean {
-    // Check if an import path like "/react@^19.1.1?target=es2022" or "/motion-utils@^12.23.6?target=es2022"
-    // matches a manifest URL like "https://esm.sh/react@19.2.0" or "https://esm.sh/motion-utils@12.23.6"
+  private buildDepNameVersionKeyWithPeerContext(
+    baseDepNameVersion: string,
+    peerContext: string[]
+  ): string {
+    // Build the key used in relativeImports structure
+    // Example: "framer-motion@12.23.24" + ["react@19.2.0", "react-dom@19.2.0"]
+    //       -> "framer-motion@12.23.24_react-19.2.0_react-dom-19.2.0"
 
-    // Extract package name from import path
-    let importPackageName: string;
+    if (!peerContext || peerContext.length === 0) {
+      return baseDepNameVersion;
+    }
 
-    // Handle version constraints like "/motion-utils@^12.23.6?target=es2022"
-    // Also handle version constraints with sub-paths like "/react@^19.1.1/jsx-runtime?target=es2022"
-    if (this.hasVersionConstraint(importPath)) {
-      importPackageName = this.getPackageNameFromConstraint(importPath) || "";
-    } else {
-      // Handle other absolute paths like "/react@19.2.0/es2022/react.mjs" or "/motion-utils@12.23.6?target=es2022"
-      // Also handle scoped packages like "/@emotion/is-prop-valid?target=es2022"
-      let match;
-      if (importPath.startsWith("/@")) {
-        // Scoped package like "/@emotion/is-prop-valid?target=es2022"
-        match = importPath.match(/^\/(@[^/]+\/[^@/?]+)(?:@[^/?]*)?(?:[?/].*)?/);
-        importPackageName = match ? match[1] : "";
-      } else {
-        // Regular package like "/react?target=es2022" or "/motion-utils?target=es2022"
-        match = importPath.match(/^\/([^@/?]+)(?:@[^/?]*)?(?:[?/].*)?/);
-        importPackageName = match ? match[1] : "";
+    // Convert peer dependencies to underscore-separated format
+    const peerSuffix = peerContext
+      .map((peer) => peer.replace("@", "-").replace("/", "-"))
+      .join("_");
+
+    return `${baseDepNameVersion}_${peerSuffix}`;
+  }
+
+  private findBestMatchingUrl(importPath: string): string | null {
+    // Find the best matching URL for an import path
+    // Prioritizes subpath matches over base package matches
+    // Example: "/react@^19.2.0/jsx-runtime?target=es2022" should match
+    //          "https://esm.sh/react@19.2.0/jsx-runtime" over
+    //          "https://esm.sh/react@19.2.0/es2022/react.mjs"
+
+    const allUrls = Object.keys(this.manifest.urlToFile);
+    const candidates: Array<{ url: string; score: number }> = [];
+
+    // Extract package name and subpath from import
+    const { packageName, subpath } = this.extractPackageAndSubpath(importPath);
+    if (!packageName) return null;
+
+    // Score each URL
+    for (const url of allUrls) {
+      const matchResult = this.matchUrlToImport(url, packageName, subpath);
+      if (matchResult.matches) {
+        candidates.push({ url, score: matchResult.score });
       }
     }
 
-    if (!importPackageName) return false;
+    if (candidates.length === 0) return null;
 
-    // Check if the manifest URL contains this package
+    // Sort by score (highest first) and return the best match
+    candidates.sort((a, b) => b.score - a.score);
+    return candidates[0].url;
+  }
+
+  private extractPackageAndSubpath(
+    importPath: string
+  ): { packageName: string; subpath: string } {
+    // Extract package name and subpath from import path
+    // Examples:
+    //   "/react@^19.1.1/jsx-runtime?target=es2022" -> { packageName: "react", subpath: "/jsx-runtime" }
+    //   "/motion-utils@^12.23.6?target=es2022" -> { packageName: "motion-utils", subpath: "" }
+    //   "/@emotion/is-prop-valid@^1.4.0?target=es2022" -> { packageName: "@emotion/is-prop-valid", subpath: "" }
+    //   "/react@19.2.0/es2022/react.mjs" -> { packageName: "react", subpath: "/es2022/react.mjs" }
+
+    let packageName = "";
+    let subpath = "";
+
+    // Handle scoped packages
+    if (importPath.startsWith("/@")) {
+      // Scoped package like "/@emotion/is-prop-valid@^1.4.0?target=es2022"
+      const match = importPath.match(/^\/(@[^/]+\/[^@/?]+)(?:@[^/?]*)?([/?].*)?$/);
+      if (match) {
+        packageName = match[1];
+        subpath = match[2] || "";
+        // Remove query parameters from subpath
+        subpath = subpath.split("?")[0];
+      }
+    } else {
+      // Regular package like "/react@^19.1.1/jsx-runtime?target=es2022"
+      const match = importPath.match(/^\/([^@/?]+)(?:@[^/?]*)?([/?].*)?$/);
+      if (match) {
+        packageName = match[1];
+        subpath = match[2] || "";
+        // Remove query parameters from subpath
+        subpath = subpath.split("?")[0];
+      }
+    }
+
+    return { packageName, subpath };
+  }
+
+  private matchUrlToImport(
+    manifestUrl: string,
+    packageName: string,
+    subpath: string
+  ): { matches: boolean; score: number } {
+    // Check if a manifest URL matches the package name and subpath
+    // Returns a score where higher = better match
+    // Score breakdown:
+    //   - Package name match: 1 point
+    //   - Exact subpath match: 100 points
+    //   - No subpath in import, any URL for package: 1 point
+
     try {
       const urlObj = new URL(manifestUrl);
       const pathParts = urlObj.pathname.split("/").filter((p) => p);
 
-      if (urlObj.hostname === "esm.sh" && pathParts.length > 0) {
-        const firstPart = pathParts[0];
-        if (firstPart.startsWith("@")) {
-          // Scoped package like @types/node
-          if (pathParts.length > 1) {
-            const scopeAndPackage = `${firstPart}/${
-              pathParts[1].split("@")[0]
-            }`;
-            if (scopeAndPackage === importPackageName) {
-              return true;
-            }
-          }
-        } else {
-          // Regular package like react, motion-utils, etc.
-          const packageName = firstPart.split("@")[0];
-          if (packageName === importPackageName) {
-            return true;
+      if (urlObj.hostname !== "esm.sh" || pathParts.length === 0) {
+        return { matches: false, score: 0 };
+      }
+
+      const firstPart = pathParts[0];
+      let urlPackageName = "";
+      let urlSubpath = "";
+
+      if (firstPart.startsWith("@")) {
+        // Scoped package like @emotion/is-prop-valid@1.4.0
+        if (pathParts.length > 1) {
+          urlPackageName = `${firstPart}/${pathParts[1].split("@")[0]}`;
+          // Get remaining path after package@version
+          const remainingParts = pathParts.slice(1);
+          if (remainingParts.length > 0) {
+            // Remove version from first part
+            const versionRemoved = remainingParts[0].includes("@")
+              ? remainingParts.slice(1)
+              : remainingParts;
+            urlSubpath = versionRemoved.length > 0 ? "/" + versionRemoved.join("/") : "";
           }
         }
+      } else {
+        // Regular package like react@19.2.0/jsx-runtime
+        urlPackageName = firstPart.split("@")[0];
+        // Get remaining path after package@version
+        const remainingParts = pathParts.slice(1);
+        urlSubpath = remainingParts.length > 0 ? "/" + remainingParts.join("/") : "";
       }
-    } catch (e) {
-      throw new Error(`Could not find package name in URL: ${manifestUrl}`);
-    }
 
-    return false;
+      // Check if package name matches
+      if (urlPackageName !== packageName) {
+        return { matches: false, score: 0 };
+      }
+
+      // Package matches, now check subpath
+      if (!subpath || subpath === "/") {
+        // No specific subpath requested, any URL for this package is valid
+        return { matches: true, score: 1 };
+      }
+
+      // Normalize subpaths for comparison (remove leading slash if present)
+      const normalizedImportSubpath = subpath.startsWith("/") ? subpath.substring(1) : subpath;
+      const normalizedUrlSubpath = urlSubpath.startsWith("/") ? urlSubpath.substring(1) : urlSubpath;
+
+      // Check for exact subpath match
+      if (normalizedUrlSubpath === normalizedImportSubpath) {
+        return { matches: true, score: 100 };
+      }
+
+      // Check if URL subpath starts with import subpath (e.g., import wants /jsx-runtime, URL has /jsx-runtime or /es2022/jsx-runtime.mjs)
+      if (normalizedUrlSubpath.includes(normalizedImportSubpath)) {
+        return { matches: true, score: 50 };
+      }
+
+      // Package matches but subpath doesn't - low score
+      return { matches: true, score: 1 };
+    } catch (e) {
+      return { matches: false, score: 0 };
+    }
   }
 
   private getNestedImportPath(
@@ -416,8 +559,8 @@ export class DependencyImportProcessor {
         );
       }
 
-      const depNameVersion = depFilenameInfo[0];
-      const packageName = depNameVersion.split("@")[0];
+      const baseDepNameVersion = depFilenameInfo[0];
+      const packageName = baseDepNameVersion.split("@")[0];
       const packagePath = this.extractPackagePathFromUrl(
         absoluteUrl,
         packageName
@@ -451,7 +594,7 @@ export class DependencyImportProcessor {
   private findCurrentFileUrl(filename: string): string | null {
     // Find the esm.sh URL that maps to this filename
     for (const [esmUrl, localFilename] of Object.entries(
-      this.manifest.dependencies
+      this.manifest.urlToFile
     )) {
       if (localFilename === filename) {
         return esmUrl;
