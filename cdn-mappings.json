@@ -6,7 +6,7 @@
     "react-dom/client": "https://esm.sh/react-dom@{version}/client",
     "framer-motion": "https://esm.sh/framer-motion@{version}",
     "@emotion/is-prop-valid": "https://esm.sh/@emotion/is-prop-valid@{version}",
-    "lucide-react": "https://esm.sh/lucide-react@{ version}",
+    "lucide-react": "https://esm.sh/lucide-react@{version}",
     "clsx": "https://esm.sh/clsx@{version}",
     "tailwind-merge": "https://esm.sh/tailwind-merge@{version}"
   },
