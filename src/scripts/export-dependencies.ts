@@ -1,10 +1,11 @@
 import * as fs from "fs";
-import { AnalyzedDependency } from "./analyze-dependencies";
+import { AnalyzedDependency, SubpathConfig } from "./analyze-dependencies";
 
 interface CompleteIndexLookup {
   dependencies: { [esmUrl: string]: string };
   relativeImports: any;
   availableVersions: { [packageName: string]: string[] };
+  standaloneSubpaths?: { [packageName: string]: (string | SubpathConfig)[] };
   packages: AnalyzedDependency[];
 }
 
@@ -33,6 +34,7 @@ export class DependencyExporter {
 
     // Step 2: Read the "availableVersions" key
     const availableVersions = lookupIndex.availableVersions || {};
+    const standaloneSubpaths = lookupIndex.standaloneSubpaths || {};
     const packages = lookupIndex.packages.map((pkg) => {
       const { depth, peerDependencies, ...rest } = pkg;
       return rest;
@@ -46,7 +48,7 @@ export class DependencyExporter {
 
     // Step 3: Write to cdn-exports.json
     const exportContent = JSON.stringify(
-      { availableVersions, packages },
+      { availableVersions, standaloneSubpaths, packages },
       null,
       2
     );

@@ -3,8 +3,16 @@ import * as fs from "fs";
 import * as path from "path";
 import * as semver from "semver";
 
+export interface SubpathConfig {
+  name: string;
+  fromVersion?: string; // Semver constraint - only include for versions matching this
+}
+
 interface CDNMapping {
   packages: { [key: string]: string };
+  standaloneSubpaths?: {
+    [packageName: string]: (string | SubpathConfig)[];
+  };
   sameVersionRequired: string[][];
 }
 
@@ -32,6 +40,7 @@ interface DependencyAnalysisResult {
   packages: AnalyzedDependency[]; // Packages to download with their peer context
   urlToFile: { [url: string]: string }; // Will be populated during download
   availableVersions: { [packageName: string]: string[] };
+  standaloneSubpaths?: { [packageName: string]: (string | SubpathConfig)[] };
 }
 
 export class DependencyAnalyzer {
@@ -78,6 +87,14 @@ export class DependencyAnalyzer {
       this.cdnMappings.packages
     )) {
       try {
+        // Skip if this is a standalone subpath entry (will be handled with parent)
+        if (this.isStandaloneSubpath(depName)) {
+          console.log(
+            `  ⏭️  Skipping ${depName} (standalone subpath, will be handled with parent)`
+          );
+          continue;
+        }
+
         console.log(`  🔍 Analyzing ${depName}...`);
         const foundVersions = await this.getMultipleVersions(depName);
         const versions = (
@@ -134,9 +151,111 @@ export class DependencyAnalyzer {
         }
 
         this.packageInfoCache.set(depName, packageInfoList);
+
+        // Handle standalone subpaths for this package
+        await this.handleStandaloneSubpaths(depName, versions);
       } catch (error) {
         console.error(`❌ Failed to analyze ${depName}:`, error);
       }
+    }
+  }
+
+  private isStandaloneSubpath(packageName: string): boolean {
+    // Check if this package name is actually a subpath (contains /)
+    // and is defined as a standalone subpath in cdn-mappings
+    if (!packageName.includes("/")) return false;
+
+    const [parentPkg, ...subpathParts] = packageName.split("/");
+    const subpath = subpathParts.join("/");
+
+    const standaloneSubpaths = this.cdnMappings.standaloneSubpaths || {};
+    const subpathConfigs = standaloneSubpaths[parentPkg];
+
+    if (!subpathConfigs) return false;
+
+    return subpathConfigs.some((config) => {
+      const name = typeof config === "string" ? config : config.name;
+      return name === subpath;
+    });
+  }
+
+  private async handleStandaloneSubpaths(
+    parentPackage: string,
+    versions: string[]
+  ): Promise<void> {
+    const standaloneSubpaths = this.cdnMappings.standaloneSubpaths || {};
+    const subpathConfigs = standaloneSubpaths[parentPackage];
+
+    if (!subpathConfigs || subpathConfigs.length === 0) return;
+
+    console.log(
+      `    🔗 Found ${subpathConfigs.length} standalone subpath(s) for ${parentPackage}`
+    );
+
+    for (const subpathConfig of subpathConfigs) {
+      // Handle both string and SubpathConfig formats
+      const subpathName = typeof subpathConfig === 'string' ? subpathConfig : subpathConfig.name;
+      const fromVersion = typeof subpathConfig === 'string' ? undefined : subpathConfig.fromVersion;
+      
+      const fullSubpathName = `${parentPackage}/${subpathName}`;
+
+      // Check if the subpath has its own entry in packages
+      if (!this.cdnMappings.packages[fullSubpathName]) {
+        console.warn(
+          `    ⚠️  Subpath ${fullSubpathName} not found in packages mapping`
+        );
+        continue;
+      }
+
+      // Filter versions based on fromVersion constraint if specified
+      let applicableVersions = versions;
+      if (fromVersion) {
+        applicableVersions = versions.filter(version => {
+          try {
+            return semver.satisfies(version, fromVersion);
+          } catch (error) {
+            console.warn(
+              `    ⚠️  Invalid version or constraint: ${version} vs ${fromVersion}`
+            );
+            return false;
+          }
+        });
+        
+        if (applicableVersions.length === 0) {
+          console.log(
+            `    ⏭️  Skipping ${fullSubpathName}: no versions match constraint ${fromVersion}`
+          );
+          continue;
+        }
+        
+        console.log(
+          `    🔍 Filtered ${fullSubpathName} to ${applicableVersions.length}/${versions.length} versions matching ${fromVersion}`
+        );
+      }
+
+      // Store the filtered versions for this subpath
+      this.availableVersions.set(fullSubpathName, applicableVersions);
+
+      const packageInfoList: PackageInfo[] = [];
+      for (const version of applicableVersions) {
+        // Subpaths inherit peer dependencies from parent package
+        const parentInfo = this.packageInfoCache
+          .get(parentPackage)
+          ?.find((p) => p.version === version);
+
+        packageInfoList.push({
+          name: fullSubpathName,
+          version,
+          peerDependencies: parentInfo?.peerDependencies || {},
+          hasManagedImports: false, // Subpaths don't have their own managed imports
+        });
+
+        console.log(
+          `      📎 ${fullSubpathName}@${version} (inherits from ${parentPackage})`
+        );
+      }
+
+      this.packageInfoCache.set(fullSubpathName, packageInfoList);
     }
   }
 
@@ -204,27 +323,6 @@ export class DependencyAnalyzer {
     }
 
     return packages;
-  }
-
-  private getPeerDependenciesForPackage(
-    packageName: string,
-    version: string
-  ): PeerDependencies {
-    // Look up in the package info cache
-    const packageInfoList = this.packageInfoCache.get(packageName);
-    if (!packageInfoList) {
-      return {};
-    }
-
-    // Find the specific version
-    const packageInfo = packageInfoList.find(
-      (info) => info.version === version
-    );
-    if (!packageInfo) {
-      return {};
-    }
-
-    return packageInfo.peerDependencies || {};
   }
 
   private getExternalPeerDependencies(
@@ -377,6 +475,7 @@ export class DependencyAnalyzer {
       packages: sortedDeps,
       urlToFile: {}, // Will be populated during download phase
       availableVersions: availableVersionsObject,
+      standaloneSubpaths: this.cdnMappings.standaloneSubpaths || {},
     };
 
     const outputDir = path.dirname(this.outputPath);
