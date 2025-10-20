@@ -9,6 +9,15 @@
       "18.1.0",
       "17.0.2"
     ],
+    "react/jsx-runtime": [
+      "19.2.0",
+      "19.1.1",
+      "19.0.0",
+      "18.3.1",
+      "18.2.0",
+      "18.1.0",
+      "17.0.2"
+    ],
     "react-dom": [
       "19.2.0",
       "19.1.1",
@@ -17,6 +26,14 @@
       "18.2.0",
       "18.1.0",
       "17.0.2"
+    ],
+    "react-dom/client": [
+      "19.2.0",
+      "19.1.1",
+      "19.0.0",
+      "18.3.1",
+      "18.2.0",
+      "18.1.0"
     ],
     "framer-motion": [
       "12.23.24",
@@ -60,6 +77,20 @@
       "1.14.0",
       "1.13.2",
       "1.12.0"
+    ]
+  },
+  "standaloneSubpaths": {
+    "react": [
+      {
+        "name": "jsx-runtime",
+        "fromVersion": "^17.0.0 || ^18.0.0 || ^19.0.0"
+      }
+    ],
+    "react-dom": [
+      {
+        "name": "client",
+        "fromVersion": "^18.0.0 || ^19.0.0"
+      }
     ]
   },
   "packages": [
@@ -157,6 +188,106 @@
       "name": "react",
       "version": "17.0.2",
       "url": "https://esm.sh/react@17.0.2"
+    },
+    {
+      "name": "react-dom",
+      "version": "19.2.0",
+      "url": "https://esm.sh/react-dom@19.2.0"
+    },
+    {
+      "name": "react-dom",
+      "version": "19.1.1",
+      "url": "https://esm.sh/react-dom@19.1.1"
+    },
+    {
+      "name": "react-dom",
+      "version": "19.0.0",
+      "url": "https://esm.sh/react-dom@19.0.0"
+    },
+    {
+      "name": "react-dom",
+      "version": "18.3.1",
+      "url": "https://esm.sh/react-dom@18.3.1"
+    },
+    {
+      "name": "react-dom",
+      "version": "18.2.0",
+      "url": "https://esm.sh/react-dom@18.2.0"
+    },
+    {
+      "name": "react-dom",
+      "version": "18.1.0",
+      "url": "https://esm.sh/react-dom@18.1.0"
+    },
+    {
+      "name": "react-dom",
+      "version": "17.0.2",
+      "url": "https://esm.sh/react-dom@17.0.2"
+    },
+    {
+      "name": "react-dom/client",
+      "version": "19.2.0",
+      "url": "https://esm.sh/react-dom@19.2.0/client"
+    },
+    {
+      "name": "react-dom/client",
+      "version": "19.1.1",
+      "url": "https://esm.sh/react-dom@19.1.1/client"
+    },
+    {
+      "name": "react-dom/client",
+      "version": "19.0.0",
+      "url": "https://esm.sh/react-dom@19.0.0/client"
+    },
+    {
+      "name": "react-dom/client",
+      "version": "18.3.1",
+      "url": "https://esm.sh/react-dom@18.3.1/client"
+    },
+    {
+      "name": "react-dom/client",
+      "version": "18.2.0",
+      "url": "https://esm.sh/react-dom@18.2.0/client"
+    },
+    {
+      "name": "react-dom/client",
+      "version": "18.1.0",
+      "url": "https://esm.sh/react-dom@18.1.0/client"
+    },
+    {
+      "name": "react/jsx-runtime",
+      "version": "19.2.0",
+      "url": "https://esm.sh/react@19.2.0/jsx-runtime"
+    },
+    {
+      "name": "react/jsx-runtime",
+      "version": "19.1.1",
+      "url": "https://esm.sh/react@19.1.1/jsx-runtime"
+    },
+    {
+      "name": "react/jsx-runtime",
+      "version": "19.0.0",
+      "url": "https://esm.sh/react@19.0.0/jsx-runtime"
+    },
+    {
+      "name": "react/jsx-runtime",
+      "version": "18.3.1",
+      "url": "https://esm.sh/react@18.3.1/jsx-runtime"
+    },
+    {
+      "name": "react/jsx-runtime",
+      "version": "18.2.0",
+      "url": "https://esm.sh/react@18.2.0/jsx-runtime"
+    },
+    {
+      "name": "react/jsx-runtime",
+      "version": "18.1.0",
+      "url": "https://esm.sh/react@18.1.0/jsx-runtime"
+    },
+    {
+      "name": "react/jsx-runtime",
+      "version": "17.0.2",
+      "url": "https://esm.sh/react@17.0.2/jsx-runtime"
     },
     {
       "name": "tailwind-merge",
@@ -611,7 +742,7 @@
     {
       "name": "lucide-react",
       "version": "0.546.0",
-      "url": "https://esm.sh/lucide-react@0.546.0?react=19.2.0",
+      "url": "https://esm.sh/lucide-react@{ version}?react=19.2.0",
       "peerContext": {
         "react": "19.2.0"
       }
@@ -619,7 +750,7 @@
     {
       "name": "lucide-react",
       "version": "0.546.0",
-      "url": "https://esm.sh/lucide-react@0.546.0?react=19.1.1",
+      "url": "https://esm.sh/lucide-react@{ version}?react=19.1.1",
       "peerContext": {
         "react": "19.1.1"
       }
@@ -627,7 +758,7 @@
     {
       "name": "lucide-react",
       "version": "0.546.0",
-      "url": "https://esm.sh/lucide-react@0.546.0?react=19.0.0",
+      "url": "https://esm.sh/lucide-react@{ version}?react=19.0.0",
       "peerContext": {
         "react": "19.0.0"
       }
@@ -635,7 +766,7 @@
     {
       "name": "lucide-react",
       "version": "0.546.0",
-      "url": "https://esm.sh/lucide-react@0.546.0?react=18.3.1",
+      "url": "https://esm.sh/lucide-react@{ version}?react=18.3.1",
       "peerContext": {
         "react": "18.3.1"
       }
@@ -643,7 +774,7 @@
     {
       "name": "lucide-react",
       "version": "0.546.0",
-      "url": "https://esm.sh/lucide-react@0.546.0?react=18.2.0",
+      "url": "https://esm.sh/lucide-react@{ version}?react=18.2.0",
       "peerContext": {
         "react": "18.2.0"
       }
@@ -651,7 +782,7 @@
     {
       "name": "lucide-react",
       "version": "0.546.0",
-      "url": "https://esm.sh/lucide-react@0.546.0?react=18.1.0",
+      "url": "https://esm.sh/lucide-react@{ version}?react=18.1.0",
       "peerContext": {
         "react": "18.1.0"
       }
@@ -659,7 +790,7 @@
     {
       "name": "lucide-react",
       "version": "0.546.0",
-      "url": "https://esm.sh/lucide-react@0.546.0?react=17.0.2",
+      "url": "https://esm.sh/lucide-react@{ version}?react=17.0.2",
       "peerContext": {
         "react": "17.0.2"
       }
@@ -667,7 +798,7 @@
     {
       "name": "lucide-react",
       "version": "0.545.0",
-      "url": "https://esm.sh/lucide-react@0.545.0?react=19.2.0",
+      "url": "https://esm.sh/lucide-react@{ version}?react=19.2.0",
       "peerContext": {
         "react": "19.2.0"
       }
@@ -675,7 +806,7 @@
     {
       "name": "lucide-react",
       "version": "0.545.0",
-      "url": "https://esm.sh/lucide-react@0.545.0?react=19.1.1",
+      "url": "https://esm.sh/lucide-react@{ version}?react=19.1.1",
       "peerContext": {
         "react": "19.1.1"
       }
@@ -683,7 +814,7 @@
     {
       "name": "lucide-react",
       "version": "0.545.0",
-      "url": "https://esm.sh/lucide-react@0.545.0?react=19.0.0",
+      "url": "https://esm.sh/lucide-react@{ version}?react=19.0.0",
       "peerContext": {
         "react": "19.0.0"
       }
@@ -691,7 +822,7 @@
     {
       "name": "lucide-react",
       "version": "0.545.0",
-      "url": "https://esm.sh/lucide-react@0.545.0?react=18.3.1",
+      "url": "https://esm.sh/lucide-react@{ version}?react=18.3.1",
       "peerContext": {
         "react": "18.3.1"
       }
@@ -699,7 +830,7 @@
     {
       "name": "lucide-react",
       "version": "0.545.0",
-      "url": "https://esm.sh/lucide-react@0.545.0?react=18.2.0",
+      "url": "https://esm.sh/lucide-react@{ version}?react=18.2.0",
       "peerContext": {
         "react": "18.2.0"
       }
@@ -707,7 +838,7 @@
     {
       "name": "lucide-react",
       "version": "0.545.0",
-      "url": "https://esm.sh/lucide-react@0.545.0?react=18.1.0",
+      "url": "https://esm.sh/lucide-react@{ version}?react=18.1.0",
       "peerContext": {
         "react": "18.1.0"
       }
@@ -715,7 +846,7 @@
     {
       "name": "lucide-react",
       "version": "0.545.0",
-      "url": "https://esm.sh/lucide-react@0.545.0?react=17.0.2",
+      "url": "https://esm.sh/lucide-react@{ version}?react=17.0.2",
       "peerContext": {
         "react": "17.0.2"
       }
@@ -723,7 +854,7 @@
     {
       "name": "lucide-react",
       "version": "0.544.0",
-      "url": "https://esm.sh/lucide-react@0.544.0?react=19.2.0",
+      "url": "https://esm.sh/lucide-react@{ version}?react=19.2.0",
       "peerContext": {
         "react": "19.2.0"
       }
@@ -731,7 +862,7 @@
     {
       "name": "lucide-react",
       "version": "0.544.0",
-      "url": "https://esm.sh/lucide-react@0.544.0?react=19.1.1",
+      "url": "https://esm.sh/lucide-react@{ version}?react=19.1.1",
       "peerContext": {
         "react": "19.1.1"
       }
@@ -739,7 +870,7 @@
     {
       "name": "lucide-react",
       "version": "0.544.0",
-      "url": "https://esm.sh/lucide-react@0.544.0?react=19.0.0",
+      "url": "https://esm.sh/lucide-react@{ version}?react=19.0.0",
       "peerContext": {
         "react": "19.0.0"
       }
@@ -747,7 +878,7 @@
     {
       "name": "lucide-react",
       "version": "0.544.0",
-      "url": "https://esm.sh/lucide-react@0.544.0?react=18.3.1",
+      "url": "https://esm.sh/lucide-react@{ version}?react=18.3.1",
       "peerContext": {
         "react": "18.3.1"
       }
@@ -755,7 +886,7 @@
     {
       "name": "lucide-react",
       "version": "0.544.0",
-      "url": "https://esm.sh/lucide-react@0.544.0?react=18.2.0",
+      "url": "https://esm.sh/lucide-react@{ version}?react=18.2.0",
       "peerContext": {
         "react": "18.2.0"
       }
@@ -763,7 +894,7 @@
     {
       "name": "lucide-react",
       "version": "0.544.0",
-      "url": "https://esm.sh/lucide-react@0.544.0?react=18.1.0",
+      "url": "https://esm.sh/lucide-react@{ version}?react=18.1.0",
       "peerContext": {
         "react": "18.1.0"
       }
@@ -771,215 +902,7 @@
     {
       "name": "lucide-react",
       "version": "0.544.0",
-      "url": "https://esm.sh/lucide-react@0.544.0?react=17.0.2",
-      "peerContext": {
-        "react": "17.0.2"
-      }
-    },
-    {
-      "name": "react",
-      "version": "19.2.0",
-      "url": "https://esm.sh/react@19.2.0?react=19.2.0",
-      "peerContext": {
-        "react": "19.2.0"
-      }
-    },
-    {
-      "name": "react",
-      "version": "19.1.1",
-      "url": "https://esm.sh/react@19.1.1?react=19.2.0",
-      "peerContext": {
-        "react": "19.2.0"
-      }
-    },
-    {
-      "name": "react",
-      "version": "19.1.1",
-      "url": "https://esm.sh/react@19.1.1?react=19.1.1",
-      "peerContext": {
-        "react": "19.1.1"
-      }
-    },
-    {
-      "name": "react",
-      "version": "19.0.0",
-      "url": "https://esm.sh/react@19.0.0?react=19.2.0",
-      "peerContext": {
-        "react": "19.2.0"
-      }
-    },
-    {
-      "name": "react",
-      "version": "19.0.0",
-      "url": "https://esm.sh/react@19.0.0?react=19.1.1",
-      "peerContext": {
-        "react": "19.1.1"
-      }
-    },
-    {
-      "name": "react",
-      "version": "19.0.0",
-      "url": "https://esm.sh/react@19.0.0?react=19.0.0",
-      "peerContext": {
-        "react": "19.0.0"
-      }
-    },
-    {
-      "name": "react",
-      "version": "18.3.1",
-      "url": "https://esm.sh/react@18.3.1?react=18.3.1",
-      "peerContext": {
-        "react": "18.3.1"
-      }
-    },
-    {
-      "name": "react",
-      "version": "18.2.0",
-      "url": "https://esm.sh/react@18.2.0?react=18.3.1",
-      "peerContext": {
-        "react": "18.3.1"
-      }
-    },
-    {
-      "name": "react",
-      "version": "18.2.0",
-      "url": "https://esm.sh/react@18.2.0?react=18.2.0",
-      "peerContext": {
-        "react": "18.2.0"
-      }
-    },
-    {
-      "name": "react",
-      "version": "18.1.0",
-      "url": "https://esm.sh/react@18.1.0?react=18.3.1",
-      "peerContext": {
-        "react": "18.3.1"
-      }
-    },
-    {
-      "name": "react",
-      "version": "18.1.0",
-      "url": "https://esm.sh/react@18.1.0?react=18.2.0",
-      "peerContext": {
-        "react": "18.2.0"
-      }
-    },
-    {
-      "name": "react",
-      "version": "18.1.0",
-      "url": "https://esm.sh/react@18.1.0?react=18.1.0",
-      "peerContext": {
-        "react": "18.1.0"
-      }
-    },
-    {
-      "name": "react",
-      "version": "17.0.2",
-      "url": "https://esm.sh/react@17.0.2?react=17.0.2",
-      "peerContext": {
-        "react": "17.0.2"
-      }
-    },
-    {
-      "name": "react-dom",
-      "version": "19.2.0",
-      "url": "https://esm.sh/react-dom@19.2.0?react=19.2.0",
-      "peerContext": {
-        "react": "19.2.0"
-      }
-    },
-    {
-      "name": "react-dom",
-      "version": "19.1.1",
-      "url": "https://esm.sh/react-dom@19.1.1?react=19.2.0",
-      "peerContext": {
-        "react": "19.2.0"
-      }
-    },
-    {
-      "name": "react-dom",
-      "version": "19.1.1",
-      "url": "https://esm.sh/react-dom@19.1.1?react=19.1.1",
-      "peerContext": {
-        "react": "19.1.1"
-      }
-    },
-    {
-      "name": "react-dom",
-      "version": "19.0.0",
-      "url": "https://esm.sh/react-dom@19.0.0?react=19.2.0",
-      "peerContext": {
-        "react": "19.2.0"
-      }
-    },
-    {
-      "name": "react-dom",
-      "version": "19.0.0",
-      "url": "https://esm.sh/react-dom@19.0.0?react=19.1.1",
-      "peerContext": {
-        "react": "19.1.1"
-      }
-    },
-    {
-      "name": "react-dom",
-      "version": "19.0.0",
-      "url": "https://esm.sh/react-dom@19.0.0?react=19.0.0",
-      "peerContext": {
-        "react": "19.0.0"
-      }
-    },
-    {
-      "name": "react-dom",
-      "version": "18.3.1",
-      "url": "https://esm.sh/react-dom@18.3.1?react=18.3.1",
-      "peerContext": {
-        "react": "18.3.1"
-      }
-    },
-    {
-      "name": "react-dom",
-      "version": "18.2.0",
-      "url": "https://esm.sh/react-dom@18.2.0?react=18.3.1",
-      "peerContext": {
-        "react": "18.3.1"
-      }
-    },
-    {
-      "name": "react-dom",
-      "version": "18.2.0",
-      "url": "https://esm.sh/react-dom@18.2.0?react=18.2.0",
-      "peerContext": {
-        "react": "18.2.0"
-      }
-    },
-    {
-      "name": "react-dom",
-      "version": "18.1.0",
-      "url": "https://esm.sh/react-dom@18.1.0?react=18.3.1",
-      "peerContext": {
-        "react": "18.3.1"
-      }
-    },
-    {
-      "name": "react-dom",
-      "version": "18.1.0",
-      "url": "https://esm.sh/react-dom@18.1.0?react=18.2.0",
-      "peerContext": {
-        "react": "18.2.0"
-      }
-    },
-    {
-      "name": "react-dom",
-      "version": "18.1.0",
-      "url": "https://esm.sh/react-dom@18.1.0?react=18.1.0",
-      "peerContext": {
-        "react": "18.1.0"
-      }
-    },
-    {
-      "name": "react-dom",
-      "version": "17.0.2",
-      "url": "https://esm.sh/react-dom@17.0.2?react=17.0.2",
+      "url": "https://esm.sh/lucide-react@{ version}?react=17.0.2",
       "peerContext": {
         "react": "17.0.2"
       }

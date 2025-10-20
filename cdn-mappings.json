@@ -1,14 +1,20 @@
 {
   "packages": {
     "react": "https://esm.sh/react@{version}",
+    "react/jsx-runtime": "https://esm.sh/react@{version}/jsx-runtime",
     "react-dom": "https://esm.sh/react-dom@{version}",
+    "react-dom/client": "https://esm.sh/react-dom@{version}/client",
     "framer-motion": "https://esm.sh/framer-motion@{version}",
     "@emotion/is-prop-valid": "https://esm.sh/@emotion/is-prop-valid@{version}",
-    "lucide-react": "https://esm.sh/lucide-react@{version}",
+    "lucide-react": "https://esm.sh/lucide-react@{ version}",
     "clsx": "https://esm.sh/clsx@{version}",
     "tailwind-merge": "https://esm.sh/tailwind-merge@{version}"
   },
+  "standaloneSubpaths": {
+    "react": [{ "name": "jsx-runtime", "fromVersion": "^17.0.0 || ^18.0.0 || ^19.0.0" }],
+    "react-dom": [{ "name": "client", "fromVersion": "^18.0.0 || ^19.0.0" }]
+  },
   "sameVersionRequired": [
-    ["react", "react-dom", "react/jsx-runtime"]
+    ["react", "react-dom", "react/jsx-runtime", "react-dom/client"]
   ]
 }
