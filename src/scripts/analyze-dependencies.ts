@@ -79,7 +79,14 @@ export class DependencyAnalyzer {
     )) {
       try {
         console.log(`  🔍 Analyzing ${depName}...`);
-        const versions = await this.getMultipleVersions(depName);
+        const foundVersions = await this.getMultipleVersions(depName);
+        const versions = (
+          await Promise.all(
+            foundVersions.map(async (v) =>
+              (await this.verifyEsmVersionExists(depName, v)) ? v : false
+            )
+          )
+        ).filter(Boolean) as string[];
         this.availableVersions.set(depName, versions);
         const packageInfoList: PackageInfo[] = [];
 
@@ -89,8 +96,7 @@ export class DependencyAnalyzer {
 
           // Check if this package has managed peer dependencies
           const hasManagedImports = await this.checkForManagedDependencyImports(
-            depName,
-            version
+            peerDeps
           );
 
           packageInfoList.push({
@@ -330,7 +336,10 @@ export class DependencyAnalyzer {
       }
 
       // If has no peer dependencies at all, keep it
-      if (!dep.peerDependencies || Object.keys(dep.peerDependencies).length === 0) {
+      if (
+        !dep.peerDependencies ||
+        Object.keys(dep.peerDependencies).length === 0
+      ) {
         return true;
       }
 
@@ -342,8 +351,11 @@ export class DependencyAnalyzer {
       // Check if any of its peer dependencies are managed packages OUTSIDE its sameVersionRequired group
       const hasExternalManagedPeers = Object.keys(dep.peerDependencies).some(
         (peerName) => {
-          const isManaged = managedPackageNames.includes(peerName) && dep.peerDependencies![peerName] !== "*";
-          const isInternal = sameVersionGroup && sameVersionGroup.includes(peerName);
+          const isManaged =
+            managedPackageNames.includes(peerName) &&
+            dep.peerDependencies![peerName] !== "*";
+          const isInternal =
+            sameVersionGroup && sameVersionGroup.includes(peerName);
           return isManaged && !isInternal;
         }
       );
@@ -380,7 +392,11 @@ export class DependencyAnalyzer {
         Object.keys(availableVersionsObject).length
       } packages`
     );
-    console.log(`   (Filtered out ${packages.length - filteredPackages.length} base versions)`);
+    console.log(
+      `   (Filtered out ${
+        packages.length - filteredPackages.length
+      } base versions)`
+    );
 
     // Print depth distribution
     const depthDistribution = new Map<number, number>();
@@ -399,8 +415,6 @@ export class DependencyAnalyzer {
     }
   }
 
-  // Helper methods
-
   private async getPeerDependencies(
     packageName: string,
     version: string
@@ -418,46 +432,34 @@ export class DependencyAnalyzer {
   }
 
   private async checkForManagedDependencyImports(
-    packageName: string,
-    version: string
+    peerDependencies: PeerDependencies
   ): Promise<boolean> {
-    try {
-      const response = await axios.get(
-        `https://registry.npmjs.org/${packageName}/${version}`
-      );
-      const peerDependencies = response.data.peerDependencies || {};
+    const managedPackages = Object.keys(this.cdnMappings.packages);
+    const primaryPeersOnly = new Set<string>();
 
-      const managedPackages = Object.keys(this.cdnMappings.packages);
-      const primaryPeersOnly = new Set<string>();
-
-      for (const sameVersionGroup of this.cdnMappings.sameVersionRequired) {
-        const primaryPeer = sameVersionGroup[0];
-        if (managedPackages.includes(primaryPeer)) {
-          primaryPeersOnly.add(primaryPeer);
-        }
+    for (const sameVersionGroup of this.cdnMappings.sameVersionRequired) {
+      const primaryPeer = sameVersionGroup[0];
+      if (managedPackages.includes(primaryPeer)) {
+        primaryPeersOnly.add(primaryPeer);
       }
-
-      for (const managedPkg of managedPackages) {
-        const isInGroup = this.cdnMappings.sameVersionRequired.some((group) =>
-          group.includes(managedPkg)
-        );
-        if (!isInGroup) {
-          primaryPeersOnly.add(managedPkg);
-        }
-      }
-
-      for (const [peerName, constraint] of Object.entries(peerDependencies)) {
-        if (constraint !== "*" && primaryPeersOnly.has(peerName)) {
-          return true;
-        }
-      }
-
-      return false;
-    } catch (error) {
-      throw new Error(
-        `Could not check managed dependency imports for ${packageName}@${version}`
-      );
     }
+
+    for (const managedPkg of managedPackages) {
+      const isInGroup = this.cdnMappings.sameVersionRequired.some((group) =>
+        group.includes(managedPkg)
+      );
+      if (!isInGroup) {
+        primaryPeersOnly.add(managedPkg);
+      }
+    }
+
+    for (const [peerName, constraint] of Object.entries(peerDependencies)) {
+      if (constraint !== "*" && primaryPeersOnly.has(peerName)) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   private createPeerPermutations(
@@ -468,7 +470,7 @@ export class DependencyAnalyzer {
     const validPeerDeps = Object.fromEntries(
       Object.entries(peerDeps).filter(
         ([peerName, constraint]) =>
-          constraint !== "*" && 
+          constraint !== "*" &&
           managedPackages.includes(peerName) &&
           peerName !== currentPackageName // Don't include the package itself as its own peer
       )
@@ -760,6 +762,19 @@ export class DependencyAnalyzer {
       }
     } catch (error) {
       throw new Error(`Failed to fetch versions for ${packageName}: ${error}`);
+    }
+  }
+
+  private async verifyEsmVersionExists(
+    packageName: string,
+    version: string
+  ): Promise<boolean> {
+    const url = `https://esm.sh/${packageName}@${version}`;
+    try {
+      const response = await axios.head(url);
+      return response.status === 200;
+    } catch (error) {
+      return false;
     }
   }
 

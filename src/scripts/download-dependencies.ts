@@ -2,6 +2,7 @@ import axios from "axios";
 import * as crypto from "crypto";
 import * as fs from "fs";
 import * as path from "path";
+import { DependencyUtils } from "./utils";
 
 interface AnalyzedDependency {
   name: string;
@@ -215,15 +216,15 @@ export class DependencyDownloader {
         const content = response.data;
 
         // Extract package name and version from URL
-        const name = this.extractPackageNameFromUrl(url);
-        const version = this.extractVersionFromUrl(url);
+        const name = DependencyUtils.extractPackageNameFromUrl(url);
+        const version = DependencyUtils.extractVersionFromUrl(url);
 
         // Extract all imports from this file
         const allImports = this.extractImports(content, url);
 
         // Resolve relative imports to absolute URLs
         const absoluteImports = allImports.map((imp) =>
-          this.resolveImportUrl(imp, url)
+          DependencyUtils.resolveImportUrl(imp, url)
         );
 
         const depInfo: DependencyInfo = {
@@ -249,8 +250,6 @@ export class DependencyDownloader {
               await this.downloadDependency(importUrl, retries, retryDelay);
             } catch (error) {
               console.warn(`      ⚠️  Failed to download nested: ${importUrl}`);
-              // Continue with other imports instead of throwing
-              // This allows partial downloads to succeed
             }
           }
         }
@@ -290,64 +289,18 @@ export class DependencyDownloader {
   }
 
   private extractImports(content: string, baseUrl?: string): string[] {
-    const rawImports = this.extractRawImports(content);
+    const rawImports = DependencyUtils.extractRawImportsWithBabel(content);
 
     // If we have a baseUrl, resolve relative imports to absolute URLs
     if (baseUrl) {
-      return rawImports.map((imp) => this.resolveImportUrl(imp, baseUrl));
+      return rawImports.map((imp) => DependencyUtils.resolveImportUrl(imp, baseUrl));
     }
 
     return rawImports;
   }
 
-  private extractRawImports(content: string): string[] {
-    const importRegex = /(?:import|export).*?from\s*["']([^"']+)["']/g;
-    const dynamicImportRegex = /import\s*\(\s*["']([^"']+)["']\s*\)/g;
-    const bareImportRegex = /^import\s+["']([^"']+)["'];?$/gm;
-
-    const imports: string[] = [];
-    let match;
-
-    // Extract from import/export statements
-    while ((match = importRegex.exec(content)) !== null) {
-      imports.push(match[1]);
-    }
-
-    // Extract from dynamic imports
-    while ((match = dynamicImportRegex.exec(content)) !== null) {
-      imports.push(match[1]);
-    }
-
-    // Extract bare imports
-    while ((match = bareImportRegex.exec(content)) !== null) {
-      imports.push(match[1]);
-    }
-
-    // Filter out template literals and invalid imports
-    const validImports = imports.filter((importPath) => {
-      if (
-        importPath.includes("${") ||
-        importPath.includes("`") ||
-        importPath.includes("\\")
-      ) {
-        return false;
-      }
-      if (
-        importPath.includes("?") &&
-        !importPath.includes(".mjs") &&
-        !importPath.includes(".js") &&
-        !importPath.startsWith("/")
-      ) {
-        return false;
-      }
-      return true;
-    });
-
-    return [...new Set(validImports)];
-  }
-
   private saveDependency(depInfo: DependencyInfo): void {
-    const hasEsmShExports = this.hasEsmShExports(depInfo.content);
+    const hasEsmShExports = DependencyUtils.hasEsmShExports(depInfo.content);
     depInfo.isLeaf = !hasEsmShExports;
 
     const hash = crypto
@@ -357,7 +310,7 @@ export class DependencyDownloader {
       .substring(0, 8);
 
     const sanitizedName = depInfo.name.replace(/\//g, "-"); // Sanitize subpath modules
-    const lockedVersion = this.cleanPackageVersion(depInfo.version); // Lock version
+    const lockedVersion = DependencyUtils.cleanPackageVersion(depInfo.version); // Lock version
 
     let filename: string;
 
@@ -439,55 +392,6 @@ export class DependencyDownloader {
     }
   }
 
-  private resolveImportUrl(importPath: string, baseUrl: string): string {
-    if (importPath.startsWith("http://") || importPath.startsWith("https://")) {
-      return importPath;
-    }
-
-    const baseUrlObj = new URL(baseUrl);
-
-    if (importPath.startsWith("/")) {
-      if (this.isPackageImport(importPath)) {
-        const cleanedPath = this.cleanPackageVersion(importPath);
-        return `${baseUrlObj.origin}${cleanedPath}`;
-      }
-      return `${baseUrlObj.origin}${importPath}`;
-    } else if (importPath.startsWith("./") || importPath.startsWith("../")) {
-      const basePathParts = baseUrlObj.pathname.split("/");
-      basePathParts.pop();
-
-      const importParts = importPath.split("/");
-
-      for (const part of importParts) {
-        if (part === ".") {
-          continue;
-        } else if (part === "..") {
-          basePathParts.pop();
-        } else {
-          basePathParts.push(part);
-        }
-      }
-
-      return `${baseUrlObj.origin}${basePathParts.join("/")}`;
-    } else {
-      return importPath;
-    }
-  }
-
-  private hasEsmShExports(content: string): boolean {
-    const exportFromRegex = /export\s+.*?\s+from\s+["']([^"']+)["']/g;
-    let match;
-
-    while ((match = exportFromRegex.exec(content)) !== null) {
-      const exportPath = match[1];
-      if (exportPath.startsWith("/") || exportPath.includes("esm.sh")) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
   private saveIndexLookup(): void {
     if (!this.dependencyAnalysis) {
       console.warn("⚠️  No dependency analysis to save");
@@ -506,56 +410,6 @@ export class DependencyDownloader {
         Object.keys(this.dependencyAnalysis.urlToFile).length
       } URL -> file mappings`
     );
-  }
-
-  private extractPackageNameFromUrl(url: string): string {
-    const urlObj = new URL(url);
-    const pathParts = urlObj.pathname.split("/").filter((p) => p);
-
-    if (urlObj.hostname === "esm.sh") {
-      if (pathParts.length === 0) {
-        return "unknown";
-      }
-
-      const firstPart = pathParts[0];
-
-      if (firstPart.startsWith("@")) {
-        if (pathParts.length > 1) {
-          const secondPart = pathParts[1];
-          const packageNamePart = secondPart.split("@")[0];
-          return `${firstPart}/${packageNamePart}`;
-        }
-        return firstPart;
-      } else {
-        return firstPart.split("@")[0];
-      }
-    }
-
-    return pathParts[0] || "unknown";
-  }
-
-  private extractVersionFromUrl(url: string): string {
-    const scopedMatch = url.match(/@[^/]+\/[^@/]+@([^/?#]+)/);
-    if (scopedMatch) {
-      return scopedMatch[1];
-    }
-
-    if (!url.includes("/@")) {
-      const regularMatch = url.match(/\/([^/@]+)@([^/?#]+)/);
-      if (regularMatch) {
-        return regularMatch[2];
-      }
-    }
-
-    return "latest";
-  }
-
-  private isPackageImport(importPath: string): boolean {
-    return /^\/[^/]+@[\^~]?[\d.]+/.test(importPath);
-  }
-
-  private cleanPackageVersion(importPath: string): string {
-    return importPath.replace(/@[\^~]/, "@");
   }
 
   private cleanupBaseVersions() {

@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import { DependencyUtils } from "../utils";
 
 interface Manifest {
   urlToFile: { [esmUrl: string]: string }; // Maps esm.sh URL -> local file path
@@ -43,7 +44,8 @@ export class DependencyImportProcessor {
       totalFiles++;
       const filePath = path.join(this.outputDir, filename);
       let content = fs.readFileSync(filePath, "utf8");
-      const originalImports = this.extractRawImports(content);
+      const originalImports =
+        DependencyUtils.extractRawImportsWithBabel(content);
 
       if (originalImports.length === 0) continue;
 
@@ -126,7 +128,12 @@ export class DependencyImportProcessor {
           // Replace relative imports with dependency paths using manifest
           let absoluteUrl: string | null = null;
 
-          // console.debug(filename, depNameVersionKey, originalImport);
+          console.debug(
+            filename,
+            depNameVersionKey,
+            originalImport,
+            baseDepNameVersion
+          );
 
           // Look up relative import in the nested dependency structure using the full key with peer context
           if (
@@ -221,80 +228,6 @@ export class DependencyImportProcessor {
     );
   }
 
-  private extractRawImports(content: string): string[] {
-    // Match both absolute URLs and relative paths - handle minified code with no spaces
-    // Standard import/export statements with proper spacing - handle multi-line imports
-    const importRegex = /(?:import|export)[\s\S]*?from\s*["']([^"']+)["']/g;
-    // Dynamic imports
-    const dynamicImportRegex = /import\s*\(\s*["']([^"']+)["']\s*\)/g;
-    // Bare import statements without 'from'
-    const bareImportRegex = /import\s*["']([^"']+)["'];?/g;
-
-    const imports: string[] = [];
-    let match;
-
-    // Extract from import/export statements
-    while ((match = importRegex.exec(content)) !== null) {
-      imports.push(match[1]);
-    }
-
-    // Extract from dynamic imports
-    while ((match = dynamicImportRegex.exec(content)) !== null) {
-      imports.push(match[1]);
-    }
-
-    // Extract bare imports
-    while ((match = bareImportRegex.exec(content)) !== null) {
-      imports.push(match[1]);
-    }
-
-    // Filter out template literals and invalid imports
-    const validImports = imports.filter((importPath) => {
-      // Skip template literals and invalid imports
-      if (
-        importPath.includes("${") ||
-        importPath.includes("`") ||
-        importPath.includes("\\")
-      ) {
-        return false;
-      }
-      // Skip URLs with query parameters ONLY if they don't look like esm.sh imports with version constraints or target parameters
-      if (
-        importPath.includes("?") &&
-        !importPath.includes(".mjs") &&
-        !importPath.includes(".js") &&
-        !importPath.match(/^\/[\w@-]+@[\^~]?[\d.]+/) && // Allow version-constrained imports like /react@^19.1.1
-        !importPath.match(/^\/@[\w-]+\/[\w-]+(@[\^~]?[\d.]+)?\?/) // Allow scoped esm.sh imports with query params, with or without version
-      ) {
-        return false;
-      }
-      return true;
-    });
-
-    return [...new Set(validImports)]; // Remove duplicates
-  }
-
-  private hasVersionConstraint(importPath: string): boolean {
-    // Check if import has version constraint like ^11.16.4 or ~2.3.4
-    // Handle both "/motion-utils@^12.23.6" and "motion-utils@^12.23.6" patterns
-    // Also handle scoped packages like "/@emotion/is-prop-valid@^1.4.0"
-    return /^\/(?:@[^/]+\/)?[^/]+@[\^~][\d.]+/.test(importPath);
-  }
-
-  private getPackageNameFromConstraint(importPath: string): string | null {
-    // Extract package name from "/motion-dom@^11.16.4?target=es2022" -> "motion-dom"
-    // Also handle scoped packages like "/@emotion/is-prop-valid@^1.4.0" -> "@emotion/is-prop-valid"
-    let match;
-    if (importPath.startsWith("/@")) {
-      // Scoped package like "/@emotion/is-prop-valid@^1.4.0"
-      match = importPath.match(/^\/(@[^/]+\/[^@]+)@/);
-    } else {
-      // Regular package like "/motion-dom@^11.16.4"
-      match = importPath.match(/^\/([^@/]+)@/);
-    }
-    return match ? match[1] : null;
-  }
-
   private extractDepNameVersionWithPeerContextFromFilename(
     filename: string
   ): [string, string[]] | null {
@@ -303,17 +236,31 @@ export class DependencyImportProcessor {
     // Examples:
     //   "framer-motion@10.16.16_react-18.1.0_006ab095.js" -> ["framer-motion@10.16.16", ["react@18.1.0"]]
     //   "react@19.2.0_165279c2.js" -> ["react@19.2.0", []]
+    //   "@antfu-ni@25.0.0_e59d44ed.js" -> ["@antfu/ni@25.0.0", []]
+    //   "node@latest_00eee0fc.js" -> ["node@latest", []]
 
     // Match pattern: packagename@version followed by underscore and hash
-    // Package name can include scope (e.g., @emotion/is-prop-valid)
+    // Package name can include scope (e.g., @emotion/is-prop-valid or @antfu/ni)
+    // In filenames, slashes are replaced with dashes: @antfu/ni -> @antfu-ni
     // Two patterns:
     // 1. With peer context: packagename@version_peercontext_hash.js
     // 2. Without peer context: packagename@version_hash.js
 
-    // Try to match with peer context first
-    let match = filename.match(/^(@?[^@]+@[\d.]+)_(.*?)_([^_]+)\.js$/);
     let packageNameVersion: string;
     let peerContextPart: string = "";
+    let match;
+
+    // Try to match with peer context first
+    // For scoped packages: @scope-package@version_peer_hash.js
+    // For regular packages: package@version_peer_hash.js
+    // Version can be numeric (19.2.0) or a tag (latest, next, canary)
+    if (filename.startsWith("@")) {
+      // Scoped package: @scope-package@version...
+      match = filename.match(/^(@[^-]+-[^@]+@[^_]+)_(.*?)_([^_]+)\.js$/);
+    } else {
+      // Regular package: package@version...
+      match = filename.match(/^([^@]+@[^_]+)_(.*?)_([^_]+)\.js$/);
+    }
 
     if (match) {
       // Has peer context
@@ -321,11 +268,31 @@ export class DependencyImportProcessor {
       peerContextPart = match[2];
     } else {
       // Try without peer context (just packagename@version_hash.js)
-      match = filename.match(/^(@?[^@]+@[\d.]+)_([^_]+)\.js$/);
+      if (filename.startsWith("@")) {
+        // Scoped package: @scope-package@version_hash.js
+        match = filename.match(/^(@[^-]+-[^@]+@[^_]+)_([^_]+)\.js$/);
+      } else {
+        // Regular package: package@version_hash.js
+        match = filename.match(/^([^@]+@[^_]+)_([^_]+)\.js$/);
+      }
+      
       if (!match) return null;
 
       packageNameVersion = match[1];
       peerContextPart = "";
+    }
+
+    // Convert filename format back to package name format
+    // @antfu-ni@25.0.0 -> @antfu/ni@25.0.0
+    if (packageNameVersion.startsWith("@")) {
+      // Find the position of the first dash after @ and replace it with /
+      const firstDashIndex = packageNameVersion.indexOf("-");
+      if (firstDashIndex !== -1) {
+        packageNameVersion =
+          packageNameVersion.substring(0, firstDashIndex) +
+          "/" +
+          packageNameVersion.substring(firstDashIndex + 1);
+      }
     }
 
     // Parse peer context if it exists
@@ -338,11 +305,23 @@ export class DependencyImportProcessor {
       for (const part of parts) {
         // Convert dash-separated format back to @-separated format
         // "react-18.1.0" -> "react@18.1.0"
-        // Note: We need to be careful with scoped packages that start with @
+        // "@emotion-is-prop-valid-1.4.0" -> "@emotion/is-prop-valid@1.4.0"
         const atMatch = part.match(/^(.+)-([\d.]+)$/);
         if (atMatch) {
-          const pkgName = atMatch[1].replace(/-/g, "/"); // Handle scoped packages: @emotion-is-prop-valid -> @emotion/is-prop-valid
+          let pkgName = atMatch[1];
           const version = atMatch[2];
+          
+          // For scoped packages, replace first dash with slash
+          if (pkgName.startsWith("@")) {
+            const firstDashIndex = pkgName.indexOf("-", 1);
+            if (firstDashIndex !== -1) {
+              pkgName =
+                pkgName.substring(0, firstDashIndex) +
+                "/" +
+                pkgName.substring(firstDashIndex + 1);
+            }
+          }
+          
           peerDependencies.push(`${pkgName}@${version}`);
         }
       }
@@ -400,9 +379,10 @@ export class DependencyImportProcessor {
     return candidates[0].url;
   }
 
-  private extractPackageAndSubpath(
-    importPath: string
-  ): { packageName: string; subpath: string } {
+  private extractPackageAndSubpath(importPath: string): {
+    packageName: string;
+    subpath: string;
+  } {
     // Extract package name and subpath from import path
     // Examples:
     //   "/react@^19.1.1/jsx-runtime?target=es2022" -> { packageName: "react", subpath: "/jsx-runtime" }
@@ -416,7 +396,9 @@ export class DependencyImportProcessor {
     // Handle scoped packages
     if (importPath.startsWith("/@")) {
       // Scoped package like "/@emotion/is-prop-valid@^1.4.0?target=es2022"
-      const match = importPath.match(/^\/(@[^/]+\/[^@/?]+)(?:@[^/?]*)?([/?].*)?$/);
+      const match = importPath.match(
+        /^\/(@[^/]+\/[^@/?]+)(?:@[^/?]*)?([/?].*)?$/
+      );
       if (match) {
         packageName = match[1];
         subpath = match[2] || "";
@@ -472,7 +454,8 @@ export class DependencyImportProcessor {
             const versionRemoved = remainingParts[0].includes("@")
               ? remainingParts.slice(1)
               : remainingParts;
-            urlSubpath = versionRemoved.length > 0 ? "/" + versionRemoved.join("/") : "";
+            urlSubpath =
+              versionRemoved.length > 0 ? "/" + versionRemoved.join("/") : "";
           }
         }
       } else {
@@ -480,7 +463,8 @@ export class DependencyImportProcessor {
         urlPackageName = firstPart.split("@")[0];
         // Get remaining path after package@version
         const remainingParts = pathParts.slice(1);
-        urlSubpath = remainingParts.length > 0 ? "/" + remainingParts.join("/") : "";
+        urlSubpath =
+          remainingParts.length > 0 ? "/" + remainingParts.join("/") : "";
       }
 
       // Check if package name matches
@@ -495,8 +479,12 @@ export class DependencyImportProcessor {
       }
 
       // Normalize subpaths for comparison (remove leading slash if present)
-      const normalizedImportSubpath = subpath.startsWith("/") ? subpath.substring(1) : subpath;
-      const normalizedUrlSubpath = urlSubpath.startsWith("/") ? urlSubpath.substring(1) : urlSubpath;
+      const normalizedImportSubpath = subpath.startsWith("/")
+        ? subpath.substring(1)
+        : subpath;
+      const normalizedUrlSubpath = urlSubpath.startsWith("/")
+        ? urlSubpath.substring(1)
+        : urlSubpath;
 
       // Check for exact subpath match
       if (normalizedUrlSubpath === normalizedImportSubpath) {
@@ -560,8 +548,22 @@ export class DependencyImportProcessor {
       }
 
       const baseDepNameVersion = depFilenameInfo[0];
-      const packageName = baseDepNameVersion.split("@")[0];
-      const packagePath = this.extractPackagePathFromUrl(
+      // Extract package name correctly for both scoped and regular packages
+      // "@antfu/ni@25.0.0" -> "@antfu/ni"
+      // "react@19.2.0" -> "react"
+      let packageName: string;
+      if (baseDepNameVersion.startsWith("@")) {
+        // Scoped package: find the second @ and get everything before it
+        const secondAtIndex = baseDepNameVersion.indexOf("@", 1);
+        packageName = secondAtIndex !== -1 
+          ? baseDepNameVersion.substring(0, secondAtIndex)
+          : baseDepNameVersion;
+      } else {
+        // Regular package: get everything before the first @
+        packageName = baseDepNameVersion.split("@")[0];
+      }
+      
+      const packagePath = DependencyUtils.extractPackagePathFromUrl(
         absoluteUrl,
         packageName
       );
@@ -601,48 +603,6 @@ export class DependencyImportProcessor {
       }
     }
     return null;
-  }
-
-  private extractPackagePathFromUrl(
-    absoluteUrl: string,
-    packageName: string
-  ): string | null {
-    try {
-      const urlObj = new URL(absoluteUrl);
-
-      // For esm.sh URLs like "https://esm.sh/framer-motion@10.17.11/es2022/dist/es/easing/cubic-bezier.mjs"
-      // Extract the path after the package name and version
-      if (urlObj.hostname === "esm.sh") {
-        const pathParts = urlObj.pathname.split("/").filter((p) => p);
-
-        // Find the package part (e.g., "framer-motion@10.17.11")
-        if (pathParts.length > 0) {
-          const packagePart = pathParts[0];
-
-          // Handle scoped packages like @emotion/is-prop-valid@1.4.0
-          let expectedPrefix: string;
-          if (packageName.startsWith("@")) {
-            // For scoped packages, expect @scope/name@version
-            expectedPrefix = packageName;
-          } else {
-            // For regular packages, expect name@version
-            expectedPrefix = packageName;
-          }
-
-          if (packagePart.startsWith(expectedPrefix)) {
-            // Get everything after the package@version part
-            const remainingParts = pathParts.slice(1);
-
-            // The remaining path is the package-relative path
-            return remainingParts.join("/");
-          }
-        }
-      }
-
-      return null;
-    } catch (e) {
-      return null;
-    }
   }
 
   private traverseNestedImports(

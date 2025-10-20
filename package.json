@@ -12,7 +12,7 @@
     "download:deps": "rimraf dependencies && yarn analyze:deps && ts-node --project tsconfig.scripts.json src/scripts/download-dependencies.ts",
     "process:imports": "ts-node --project tsconfig.scripts.json src/scripts/postprocessing/importTransforming.ts",
     "process:import-mapping": "ts-node --project tsconfig.scripts.json src/scripts/postprocessing/relativeImportMapping.ts",
-    "export:available": "ts-node --project tsconfig.scripts.json src/scripts/export-dependencies.ts",
+    "export:deps": "ts-node --project tsconfig.scripts.json src/scripts/export-dependencies.ts",
     "build-cross-browser": "ts-node --project tsconfig.scripts.json scripts/build-cross-browser.ts",
     "build-webstore": "ts-node --project tsconfig.scripts.json scripts/build-cross-browser.ts --webstore",
     "dev": "yarn build:watch",
@@ -29,16 +29,19 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
+    "@babel/parser": "^7.28.4",
+    "@babel/traverse": "^7.28.4",
+    "@babel/types": "^7.28.4",
     "@types/chrome": "^0.0.268",
     "@types/jest": "^29.5.5",
     "@types/node": "^24.7.0",
     "@types/semver": "^7.5.2",
     "jest": "^29.7.0",
     "rimraf": "^6.0.1",
+    "semver": "^7.7.3",
     "ts-jest": "^29.1.1",
     "ts-node": "^10.9.2",
-    "typescript": "^5.2.2",
-    "semver": "^7.7.3"
+    "typescript": "^5.2.2"
   },
   "dependencies": {
     "axios": "^1.5.0"

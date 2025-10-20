@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { URL } from "url";
+import { DependencyUtils } from "../utils";
 
 interface DependencyInfo {
   name: string;
@@ -113,14 +114,15 @@ export class RelativeImportProcessor {
         const content = fs.readFileSync(filePath, "utf8");
 
         // Extract package name and version from URL
-        const name = this.extractPackageNameFromUrl(esmUrl);
-        const version = this.extractVersionFromUrl(esmUrl) || "latest";
+        const name = DependencyUtils.extractPackageNameFromUrl(esmUrl);
+        const version =
+          DependencyUtils.extractVersionFromUrl(esmUrl) || "latest";
 
         // Extract peer context from URL query parameters
         const peerContext = this.extractPeerContextFromUrl(esmUrl);
 
         // Extract all imports from this file
-        const rawImports = this.extractRawImports(content);
+        const rawImports = DependencyUtils.extractRawImportsWithBabel(content);
 
         const depInfo: DependencyInfo = {
           name,
@@ -128,7 +130,7 @@ export class RelativeImportProcessor {
           url: esmUrl,
           content,
           imports: rawImports,
-          isLeaf: !this.hasEsmShExports(content),
+          isLeaf: !DependencyUtils.hasEsmShExports(content),
           peerContext,
         };
 
@@ -157,61 +159,6 @@ export class RelativeImportProcessor {
     } catch (error) {
       return {};
     }
-  }
-
-  private extractRawImports(content: string): string[] {
-    // Match both absolute URLs and relative paths - use \s* to handle minified code with no spaces
-    const importRegex = /(?:import|export).*?from\s*["']([^"']+)["']/g;
-    const dynamicImportRegex = /import\s*\(\s*["']([^"']+)["']\s*\)/g;
-    // Also match bare import statements without 'from'
-    const bareImportRegex = /^import\s+["']([^"']+)["'];?$/gm;
-
-    const imports: string[] = [];
-    let match;
-
-    // Extract from import/export statements
-    while ((match = importRegex.exec(content)) !== null) {
-      imports.push(match[1]);
-    }
-
-    // Extract from dynamic imports
-    while ((match = dynamicImportRegex.exec(content)) !== null) {
-      imports.push(match[1]);
-    }
-
-    // Extract bare imports
-    while ((match = bareImportRegex.exec(content)) !== null) {
-      imports.push(match[1]);
-    }
-
-    // Filter out template literals and invalid imports
-    const validImports = imports.filter((importPath) => {
-      // Skip template literals, data URLs, and other non-file imports
-      return (
-        !importPath.includes("${") &&
-        !importPath.startsWith("data:") &&
-        !importPath.startsWith("blob:") &&
-        !importPath.startsWith("chrome-extension:") &&
-        importPath.trim().length > 0
-      );
-    });
-
-    return [...new Set(validImports)]; // Remove duplicates
-  }
-
-  private hasEsmShExports(content: string): boolean {
-    // Check if the content has export statements that reference esm.sh URLs or absolute paths
-    const exportFromRegex = /export\s+.*?\s+from\s+["']([^"']+)["']/g;
-    let match;
-
-    while ((match = exportFromRegex.exec(content)) !== null) {
-      const exportPath = match[1];
-      if (exportPath.startsWith("/") || exportPath.includes("esm.sh")) {
-        return true;
-      }
-    }
-
-    return false;
   }
 
   private buildUrlLookupIndex(): void {
@@ -282,7 +229,7 @@ export class RelativeImportProcessor {
             const baseParentUrl = parentUrl.split("?")[0];
 
             // Resolve to absolute URL
-            const absoluteUrl = this.resolveImportUrl(
+            const absoluteUrl = DependencyUtils.resolveImportUrl(
               relativeImport,
               baseParentUrl
             );
@@ -316,6 +263,16 @@ export class RelativeImportProcessor {
               console.log(
                 `    ✅ Found exact match: ${relativeImport} -> ${absoluteUrl}`
               );
+            }
+
+            // Fallback: try exact match from baseUrl lookup
+            if (!matchedUrl) {
+              const baseUrl = absoluteUrl.split("?")[0];
+              const availableUrls =
+                (this.baseUrlToContextualUrls.get(baseUrl) || []);
+              matchedUrl = availableUrls.find((url) => {
+                return this.downloadedDeps.has(url) && url === absoluteUrl.split("?")[0];
+              }) ?? null;
             }
 
             if (!matchedUrl) {
@@ -353,7 +310,7 @@ export class RelativeImportProcessor {
             }
 
             // Convert the resolved absolute URL to a path within the package structure
-            const packagePath = this.extractPackagePath(
+            const packagePath = DependencyUtils.extractPackagePathFromUrl(
               matchedUrl,
               depInfo.name
             );
@@ -396,39 +353,6 @@ export class RelativeImportProcessor {
     );
   }
 
-  private resolveImportUrl(importPath: string, baseUrl: string): string {
-    // If it's already an absolute URL, return as-is
-    if (importPath.startsWith("http://") || importPath.startsWith("https://")) {
-      return importPath;
-    }
-
-    // Handle relative imports
-    const baseUrlObj = new URL(baseUrl);
-
-    if (importPath.startsWith("./") || importPath.startsWith("../")) {
-      // Relative path: resolve against base URL
-      const basePathParts = baseUrlObj.pathname.split("/");
-      basePathParts.pop(); // Remove filename
-
-      const importParts = importPath.split("/");
-
-      for (const part of importParts) {
-        if (part === ".") {
-          continue;
-        } else if (part === "..") {
-          basePathParts.pop();
-        } else {
-          basePathParts.push(part);
-        }
-      }
-
-      return `${baseUrlObj.origin}${basePathParts.join("/")}`;
-    } else {
-      // Bare import (shouldn't happen in esm.sh but handle it)
-      return importPath;
-    }
-  }
-
   private createSimplifiedPeerContextQuery(peerContext: {
     [peerName: string]: string;
   }): string {
@@ -436,33 +360,6 @@ export class RelativeImportProcessor {
     return Object.entries(peerContext || {})
       .map(([name, version]) => `${name}=${version}`)
       .join("&");
-  }
-
-  private extractPackagePath(
-    absoluteUrl: string,
-    packageName: string
-  ): string | null {
-    try {
-      const urlObj = new URL(absoluteUrl);
-
-      if (urlObj.hostname === "esm.sh") {
-        const pathParts = urlObj.pathname.split("/").filter((p) => p);
-
-        if (pathParts.length > 0) {
-          const packagePart = pathParts[0];
-          const expectedPrefix = packageName;
-
-          if (packagePart.startsWith(expectedPrefix)) {
-            const finalParts = pathParts.slice(1);
-            return finalParts.join("/");
-          }
-        }
-      }
-
-      return null;
-    } catch (e) {
-      return null;
-    }
   }
 
   private setNestedPath(
@@ -527,54 +424,6 @@ export class RelativeImportProcessor {
         Object.keys(manifest.relativeImports).length
       } dependencies`
     );
-  }
-
-  private extractPackageNameFromUrl(url: string): string {
-    const urlObj = new URL(url);
-    const pathParts = urlObj.pathname.split("/").filter((p) => p);
-
-    if (urlObj.hostname === "esm.sh") {
-      if (pathParts.length > 0) {
-        const packagePart = pathParts[0];
-
-        // Handle scoped packages like @emotion/is-prop-valid@1.4.0
-        if (packagePart.startsWith("@") && pathParts.length > 1) {
-          const scopePart = packagePart;
-          const namePart = pathParts[1];
-
-          // Extract just the package name without version
-          const nameWithoutVersion = namePart.split("@")[0];
-          return `${scopePart}/${nameWithoutVersion}`;
-        } else {
-          // Handle regular packages like react@19.2.0
-          const nameWithoutVersion = packagePart.split("@")[0];
-          return nameWithoutVersion;
-        }
-      }
-    }
-
-    throw new Error(`Cannot extract package name from URL: ${url}`);
-  }
-
-  private extractVersionFromUrl(url: string): string | null {
-    // For scoped packages like @emotion/is-prop-valid@1.4.0, match the version after the second @
-    // For regular packages like react@19.2.0, match the version after the first @
-
-    // First try to match scoped package pattern: @scope/package@version
-    const scopedMatch = url.match(/@[^/]+\/[^@/]+@([^/?#]+)/);
-    if (scopedMatch) {
-      return scopedMatch[1];
-    }
-
-    // Then try regular package pattern: package@version (but not for scoped packages)
-    if (!url.includes("/@")) {
-      const regularMatch = url.match(/\/([^/@]+)@([^/?#]+)/);
-      if (regularMatch) {
-        return regularMatch[2];
-      }
-    }
-
-    return null;
   }
 }
 
