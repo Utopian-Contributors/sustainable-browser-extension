@@ -1,7 +1,5 @@
 {
   "packages": {
-    "@solana/web3.js": "https://esm.sh/@solana/web3.js@{version}",
-    "shadcn": "https://esm.sh/shadcn@{version}",
     "react": "https://esm.sh/react@{version}",
     "react/jsx-runtime": "https://esm.sh/react@{version}/jsx-runtime",
     "react-dom": "https://esm.sh/react-dom@{version}",
