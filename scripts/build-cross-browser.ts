@@ -101,7 +101,7 @@ function createChromeManifest() {
     ],
     web_accessible_resources: [
       {
-        resources: ["injected.js", "dependencies/*"], // All dependency files must be web-accessible for redirects
+        resources: ["dependencies/*"], // All dependency files must be web-accessible for redirects
         matches: ["<all_urls>"],
       },
     ],
@@ -306,12 +306,6 @@ function buildChrome() {
   // Copy common files
   copyCommonFiles(CHROME_DIR);
 
-  // Copy injected script
-  fs.copyFileSync(
-    path.join(PROJECT_ROOT, "src", "extension", "injected.js"),
-    path.join(CHROME_DIR, "injected.js")
-  );
-
   // Generate Chrome manifest
   const chromeManifest = createChromeManifest();
   fs.writeFileSync(
@@ -360,12 +354,6 @@ function buildFirefox() {
   // Copy common files
   copyCommonFiles(FIREFOX_DIR);
 
-  // Copy injected script
-  fs.copyFileSync(
-    path.join(PROJECT_ROOT, "src", "extension", "injected.js"),
-    path.join(FIREFOX_DIR, "injected.js")
-  );
-
   // Generate Firefox manifest
   const firefoxManifest = createFirefoxManifest();
   fs.writeFileSync(
@@ -383,7 +371,6 @@ function validateBuild(targetDir: string, browser: string) {
   const manifestPath = path.join(targetDir, "manifest.json");
   const backgroundPath = path.join(targetDir, "background.js");
   const dependenciesPath = path.join(targetDir, "dependencies");
-  const injectedPath = path.join(targetDir, "injected.js");
   const rulesPath = path.join(targetDir, "rules.json");
 
   const issues = [];
@@ -392,10 +379,6 @@ function validateBuild(targetDir: string, browser: string) {
     issues.push("manifest.json missing");
   }
 
-  if (!fs.existsSync(injectedPath)) {
-    issues.push("injected.js missing");
-  }
-  
   if (!fs.existsSync(backgroundPath)) {
     issues.push("background.js missing");
   }
