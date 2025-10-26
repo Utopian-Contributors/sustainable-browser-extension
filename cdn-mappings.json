@@ -4,6 +4,7 @@
     "react/jsx-runtime": "https://esm.sh/react@{version}/jsx-runtime",
     "react-dom": "https://esm.sh/react-dom@{version}",
     "react-dom/client": "https://esm.sh/react-dom@{version}/client",
+    "vue": "https://esm.sh/vue@{version}",
     "framer-motion": "https://esm.sh/framer-motion@{version}",
     "lucide-react": "https://esm.sh/lucide-react@{version}",
     "clsx": "https://esm.sh/clsx@{version}",
