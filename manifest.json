@@ -5,7 +5,8 @@
   "description": "Intercepts CDN requests and serves local dependencies for sustainable browsing",
   "permissions": [
     "declarativeNetRequest",
-    "declarativeNetRequestFeedback"
+    "declarativeNetRequestFeedback",
+    "storage"
   ],
   "host_permissions": [
     "<all_urls>"

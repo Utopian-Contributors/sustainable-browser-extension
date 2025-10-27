@@ -291,12 +291,3 @@ The extension requires:
 ## License
 
 MIT License - see LICENSE file for details.
-
-## Roadmap
-
-- [ ] Support for more CDN providers
-- [ ] Automatic dependency updates
-- [ ] Content integrity verification
-- [ ] Performance analytics dashboard
-- [ ] Import map support
-- [ ] Service worker caching integration

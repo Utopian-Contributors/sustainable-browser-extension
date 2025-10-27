@@ -95,6 +95,7 @@ function createChromeManifest() {
     permissions: [
       "declarativeNetRequest",
       "declarativeNetRequestFeedback", // For debugging intercepted requests
+      "storage", // For tracking bandwidth stats
     ],
     host_permissions: [
       "<all_urls>", // Allow extension to work on all websites
@@ -148,6 +149,7 @@ function createFirefoxManifest() {
     permissions: [
       "declarativeNetRequest",
       "declarativeNetRequestFeedback",
+      "storage", // For tracking bandwidth stats
     ],
     host_permissions: [
       "<all_urls>", // Allow extension to work on all websites
