@@ -16,7 +16,7 @@ function formatBytes(bytes: number): string {
 }
 
 // Update UI with stats
-function updateUI(stats: BandwidthStats) {
+function updateUI(stats: BandwidthStats, currentPageData?: { regularSize: number; miniSize: number; domain: string }) {
   const loadingEl = document.getElementById('loading');
   const statsEl = document.getElementById('stats');
   const emptyStateEl = document.getElementById('empty-state');
@@ -39,7 +39,7 @@ function updateUI(stats: BandwidthStats) {
   // Update values
   const totalSavedEl = document.getElementById('total-saved');
   const sessionsCountEl = document.getElementById('sessions-count');
-  const avgSavedEl = document.getElementById('avg-saved');
+  const currentPageSavedEl = document.getElementById('current-page-saved');
   
   if (totalSavedEl) {
     totalSavedEl.textContent = formatBytes(stats.totalBytesSaved);
@@ -49,17 +49,35 @@ function updateUI(stats: BandwidthStats) {
     sessionsCountEl.textContent = stats.sessionsCount.toString();
   }
   
-  if (avgSavedEl) {
-    const avg = stats.sessionsCount > 0 
-      ? stats.totalBytesSaved / stats.sessionsCount 
-      : 0;
-    avgSavedEl.textContent = formatBytes(avg);
+  if (currentPageSavedEl) {
+    if (currentPageData && currentPageData.regularSize && currentPageData.miniSize) {
+      const bytesSaved = currentPageData.regularSize - currentPageData.miniSize;
+      const percentSaved = (bytesSaved / currentPageData.regularSize) * 100;
+      currentPageSavedEl.textContent = `${percentSaved.toFixed(1)}%`;
+    } else {
+      currentPageSavedEl.textContent = 'N/A';
+    }
   }
 }
 
+// Get current tab domain
+async function getCurrentTabDomain(): Promise<string | null> {
+  try {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tabs[0]?.url) {
+      const url = new URL(tabs[0].url);
+      return url.origin;
+    }
+  } catch (error) {
+    console.error('Error getting current tab:', error);
+  }
+  return null;
+}
+
 // Load and display stats
-function loadStats() {
-  chrome.runtime.sendMessage({ type: 'GET_BANDWIDTH_STATS' }, (stats: BandwidthStats) => {
+async function loadStats() {
+  // Get bandwidth stats
+  chrome.runtime.sendMessage({ type: 'GET_BANDWIDTH_STATS' }, async (stats: BandwidthStats) => {
     if (chrome.runtime.lastError) {
       console.error('Error loading stats:', chrome.runtime.lastError);
       const loadingEl = document.getElementById('loading');
@@ -69,7 +87,30 @@ function loadStats() {
       return;
     }
     
-    updateUI(stats);
+    // Get current page data
+    const currentDomain = await getCurrentTabDomain();
+    let currentPageData: { regularSize: number; miniSize: number; domain: string } | undefined;
+    
+    if (currentDomain) {
+      chrome.runtime.sendMessage({ type: 'GET_BUILD_CACHE' }, (cache: Record<string, { regularSize?: number; miniSize?: number; timestamp: number }>) => {
+        if (!chrome.runtime.lastError && cache[currentDomain]) {
+          const domainCache = cache[currentDomain];
+          if (domainCache.regularSize && domainCache.miniSize) {
+            currentPageData = {
+              regularSize: domainCache.regularSize,
+              miniSize: domainCache.miniSize,
+              domain: currentDomain
+            };
+          }
+        }
+        
+        // Update UI with all data
+        updateUI(stats, currentPageData);
+      });
+    } else {
+      // Update UI without current page data
+      updateUI(stats);
+    }
   });
 }
 

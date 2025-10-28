@@ -1,8 +1,10 @@
 // Background script for tracking bandwidth savings
 
 // Ensure chrome APIs are available
-if (typeof chrome === 'undefined' || !chrome.storage) {
-  throw new Error('Chrome APIs not available. This script must run as a Chrome extension.');
+if (typeof chrome === "undefined" || !chrome.storage) {
+  throw new Error(
+    "Chrome APIs not available. This script must run as a Chrome extension."
+  );
 }
 
 interface BandwidthStats {
@@ -21,8 +23,8 @@ interface BuildSizeCache {
 
 // Storage keys
 const STORAGE_KEYS = {
-  BANDWIDTH_STATS: 'bandwidthStats',
-  BUILD_SIZE_CACHE: 'buildSizeCache',
+  BANDWIDTH_STATS: "bandwidthStats",
+  BUILD_SIZE_CACHE: "buildSizeCache",
 } as const;
 
 // Cache for tracking which domains we're currently checking
@@ -33,11 +35,13 @@ const pendingChecks = new Map<string, Set<string>>();
  */
 async function getBandwidthStats(): Promise<BandwidthStats> {
   const result = await chrome.storage.local.get(STORAGE_KEYS.BANDWIDTH_STATS);
-  return result[STORAGE_KEYS.BANDWIDTH_STATS] || {
-    totalBytesSaved: 0,
-    sessionsCount: 0,
-    lastUpdated: Date.now(),
-  };
+  return (
+    result[STORAGE_KEYS.BANDWIDTH_STATS] || {
+      totalBytesSaved: 0,
+      sessionsCount: 0,
+      lastUpdated: Date.now(),
+    }
+  );
 }
 
 /**
@@ -48,12 +52,16 @@ async function updateBandwidthStats(bytesSaved: number): Promise<void> {
   stats.totalBytesSaved += bytesSaved;
   stats.sessionsCount += 1;
   stats.lastUpdated = Date.now();
-  
+
   await chrome.storage.local.set({
     [STORAGE_KEYS.BANDWIDTH_STATS]: stats,
   });
-  
-  console.log(`📊 Bandwidth saved: ${(bytesSaved / 1024).toFixed(2)} KB. Total: ${(stats.totalBytesSaved / 1024).toFixed(2)} KB`);
+
+  console.log(
+    `📊 Bandwidth saved: ${(bytesSaved / 1024).toFixed(2)} KB. Total: ${(
+      stats.totalBytesSaved / 1024
+    ).toFixed(2)} KB`
+  );
 }
 
 /**
@@ -67,13 +75,16 @@ async function getBuildSizeCache(): Promise<BuildSizeCache> {
 /**
  * Update build size cache in storage
  */
-async function updateBuildSizeCache(domain: string, sizes: { regularSize?: number; miniSize?: number }): Promise<void> {
+async function updateBuildSizeCache(
+  domain: string,
+  sizes: { regularSize?: number; miniSize?: number }
+): Promise<void> {
   const cache = await getBuildSizeCache();
-  
+
   if (!cache[domain]) {
     cache[domain] = { timestamp: Date.now() };
   }
-  
+
   if (sizes.regularSize !== undefined) {
     cache[domain].regularSize = sizes.regularSize;
   }
@@ -81,76 +92,101 @@ async function updateBuildSizeCache(domain: string, sizes: { regularSize?: numbe
     cache[domain].miniSize = sizes.miniSize;
   }
   cache[domain].timestamp = Date.now();
-  
+
   await chrome.storage.local.set({
     [STORAGE_KEYS.BUILD_SIZE_CACHE]: cache,
   });
 }
 
 /**
- * Fetch the size of a resource
+ * Parse file size from filename
+ * Expected formats:
+ * - Regular build: index-HASH-SIZE.js (e.g., index-Cnrlyx4t-145678.js)
+ * - Mini build: index-HASH1-HASH2-SIZE.js (e.g., index-DYX-cd9j-61169.js)
+ * where SIZE is the file size in bytes
  */
-async function fetchResourceSize(url: string): Promise<number | null> {
+function parseSizeFromFilename(url: string): number | null {
   try {
-    const response = await fetch(url, { method: 'HEAD' });
-    if (!response.ok) {
+    // Extract filename from URL
+    const urlObj = new URL(url);
+    const filename = urlObj.pathname.split('/').pop();
+    
+    if (!filename) {
+      console.warn(`⚠️ Could not extract filename from URL: ${url}`);
       return null;
     }
     
-    const contentLength = response.headers.get('content-length');
-    if (contentLength) {
-      return parseInt(contentLength, 10);
+    // Match pattern: index-...-SIZE.js where SIZE is digits
+    // The size should be the last segment before .js
+    // This handles both single hash (index-HASH-SIZE.js) and double hash (index-HASH1-HASH2-SIZE.js)
+    const match = filename.match(/index-(?:[^-]+-)*(\d+)\.js$/);
+    
+    if (match && match[1]) {
+      const size = parseInt(match[1], 10);
+      console.log(`📏 Parsed size from filename "${filename}": ${(size / 1024).toFixed(2)} KB`);
+      return size;
     }
     
-    // If HEAD doesn't provide content-length, try GET
-    const getResponse = await fetch(url);
-    if (!getResponse.ok) {
-      return null;
-    }
-    
-    const blob = await getResponse.blob();
-    return blob.size;
+    console.warn(`⚠️ Could not parse size from filename: ${filename}`);
+    return null;
   } catch (error) {
-    console.error(`Failed to fetch resource size for ${url}:`, error);
+    console.error(`❌ Error parsing filename from URL: ${url}`, error);
     return null;
   }
 }
 
 /**
- * Parse HTML to find the regular build entrypoint
+ * Parse HTML to find the regular build entrypoint and extract its size
  */
-async function findRegularBuildUrl(domain: string): Promise<string | null> {
+async function findRegularBuildInfo(domain: string): Promise<{
+  url: string;
+  size: number;
+} | null> {
   try {
     // Fetch the HTML page
     const response = await fetch(domain);
     if (!response.ok) {
       return null;
     }
-    
+
     const html = await response.text();
-    
+
     // Look for script tags that import from /assets/index*.js
-    // Pattern: await import("/assets/index-HASH.js")
-    const importMatch = html.match(/await\s+import\s*\(\s*["']([^"']*\/assets\/index[^"']*\.js)["']\s*\)/);
+    // Pattern: await import("/assets/index-HASH-SIZE.js")
+    const importMatch = html.match(
+      /await\s+import\s*\(\s*["']([^"']*\/assets\/index[^"']*\.js)["']\s*\)/
+    );
+    
+    let buildUrl: string | null = null;
+    
     if (importMatch && importMatch[1]) {
       const path = importMatch[1];
-      // If it's a relative path, make it absolute
-      if (path.startsWith('/')) {
-        return new URL(path, domain).href;
+      buildUrl = path.startsWith("/") ? new URL(path, domain).href : path;
+    } else {
+      // Alternative pattern: <script src="/assets/index-HASH-SIZE.js">
+      const scriptMatch = html.match(
+        /<script[^>]+src=["']([^"']*\/assets\/index[^"']*\.js)["']/
+      );
+      
+      if (scriptMatch && scriptMatch[1]) {
+        const path = scriptMatch[1];
+        buildUrl = path.startsWith("/") ? new URL(path, domain).href : path;
       }
-      return path;
     }
-    
-    // Alternative pattern: <script src="/assets/index-HASH.js">
-    const scriptMatch = html.match(/<script[^>]+src=["']([^"']*\/assets\/index[^"']*\.js)["']/);
-    if (scriptMatch && scriptMatch[1]) {
-      const path = scriptMatch[1];
-      if (path.startsWith('/')) {
-        return new URL(path, domain).href;
-      }
-      return path;
+
+    if (!buildUrl) {
+      return null;
     }
+
+    // Parse size from filename
+    const size = parseSizeFromFilename(buildUrl);
     
+    if (size) {
+      console.log(`📏 Parsed regular build size from filename: ${(size / 1024).toFixed(2)} KB`);
+      return { url: buildUrl, size };
+    }
+
+    console.warn(`⚠️ Could not parse size from filename for ${buildUrl}`);
     return null;
   } catch (error) {
     console.error(`Failed to parse HTML from ${domain}:`, error);
@@ -166,82 +202,107 @@ function extractDomain(url: string): string {
     const urlObj = new URL(url);
     return urlObj.origin;
   } catch {
-    return '';
+    return "";
   }
 }
 
 /**
  * Check if a URL is for a build entrypoint
  */
-function isBuildEntrypoint(url: string): { isMini: boolean; isRegular: boolean; domain: string } {
+function isBuildEntrypoint(url: string): {
+  isMini: boolean;
+  isRegular: boolean;
+  domain: string;
+} {
   const domain = extractDomain(url);
-  const isMini = url.includes('/mini/index') && url.endsWith('.js');
-  const isRegular = url.includes('/assets/index') && url.endsWith('.js') && !url.includes('/mini/');
-  
+  const isMini = url.includes("/mini/index") && url.endsWith(".js");
+  const isRegular =
+    url.includes("/assets/index") &&
+    url.endsWith(".js") &&
+    !url.includes("/mini/");
+
   return { isMini, isRegular, domain };
 }
 
 /**
  * Handle when a build is detected
  */
-async function handleBuildDetection(url: string, size: number, isMini: boolean): Promise<void> {
+async function handleBuildDetection(
+  url: string,
+  size: number,
+  isMini: boolean
+): Promise<void> {
   const domain = extractDomain(url);
   if (!domain) return;
-  
+
   // Get or initialize pending checks for this domain
   if (!pendingChecks.has(domain)) {
     pendingChecks.set(domain, new Set());
   }
   const domainChecks = pendingChecks.get(domain)!;
-  
+
   // Avoid duplicate checks
-  const checkKey = isMini ? 'mini' : 'regular';
+  const checkKey = isMini ? "mini" : "regular";
   if (domainChecks.has(checkKey)) {
     return;
   }
   domainChecks.add(checkKey);
+
+  // Parse the actual size from the filename (more reliable than transfer size)
+  const parsedSize = parseSizeFromFilename(url);
+  const actualSize = parsedSize || size; // Fall back to transfer size if parsing fails
   
-  console.log(`🔍 Detected ${isMini ? 'mini' : 'regular'} build on ${domain}: ${(size / 1024).toFixed(2)} KB`);
-  
+  if (parsedSize) {
+    console.log(
+      `🔍 Detected ${isMini ? "mini" : "regular"} build on ${domain}: ${(
+        parsedSize / 1024
+      ).toFixed(2)} KB (parsed from filename)`
+    );
+  } else {
+    console.log(
+      `🔍 Detected ${isMini ? "mini" : "regular"} build on ${domain}: ${(
+        size / 1024
+      ).toFixed(2)} KB (from transfer size)`
+    );
+  }
+
   // Update cache with the detected size
-  const updateObj = isMini ? { miniSize: size } : { regularSize: size };
+  const updateObj = isMini ? { miniSize: actualSize } : { regularSize: actualSize };
   await updateBuildSizeCache(domain, updateObj);
-  
+
   // If mini build was detected, try to fetch the regular build size for comparison
   if (isMini) {
     const cache = await getBuildSizeCache();
     const cachedData = cache[domain];
-    
+
     let regularSize = cachedData?.regularSize;
-    
-    // If we don't have the regular size cached, try to fetch it
+
+    // If we don't have the regular size cached, try to get it
     if (!regularSize) {
-      // Parse the HTML to find the actual regular build entrypoint URL
-      console.log(`📡 Parsing HTML from ${domain} to find regular build entrypoint`);
-      const regularUrl = await findRegularBuildUrl(domain);
-      
-      if (regularUrl) {
-        console.log(`📡 Found regular build URL: ${regularUrl}`);
-        const fetchedSize = await fetchResourceSize(regularUrl);
-        
-        if (fetchedSize) {
-          regularSize = fetchedSize;
-          console.log(`📥 Fetched regular build size: ${(regularSize / 1024).toFixed(2)} KB`);
-          await updateBuildSizeCache(domain, { regularSize });
-        }
+      // Parse the HTML to find the regular build info (URL and size from filename)
+      console.log(
+        `📡 Parsing HTML from ${domain} to find regular build info`
+      );
+      const regularBuildInfo = await findRegularBuildInfo(domain);
+
+      if (regularBuildInfo) {
+        regularSize = regularBuildInfo.size;
+        await updateBuildSizeCache(domain, { regularSize });
       } else {
-        console.warn(`⚠️ Could not find regular build URL in HTML for ${domain}`);
+        console.warn(
+          `⚠️ Could not find regular build info for ${domain}`
+        );
       }
     }
-    
+
     // Calculate and record savings if we have both sizes
-    if (regularSize && size < regularSize) {
-      const bytesSaved = regularSize - size;
+    if (regularSize && actualSize < regularSize) {
+      const bytesSaved = regularSize - actualSize;
       await updateBandwidthStats(bytesSaved);
       console.log(`✅ Saved ${(bytesSaved / 1024).toFixed(2)} KB on ${domain}`);
     }
   }
-  
+
   // Clean up after a short delay
   setTimeout(() => {
     domainChecks.delete(checkKey);
@@ -255,34 +316,36 @@ async function handleBuildDetection(url: string, size: number, isMini: boolean):
  * Handle messages from content script or popup
  */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === 'BUILD_DETECTED') {
+  if (message.type === "BUILD_DETECTED") {
     const { url, size, isMini } = message.payload;
     handleBuildDetection(url, size, isMini).then(() => {
       sendResponse({ success: true });
     });
     return true; // Indicates async response
   }
-  
-  if (message.type === 'GET_BANDWIDTH_STATS') {
-    getBandwidthStats().then(stats => sendResponse(stats));
+
+  if (message.type === "GET_BANDWIDTH_STATS") {
+    getBandwidthStats().then((stats) => sendResponse(stats));
     return true; // Indicates async response
   }
-  
-  if (message.type === 'RESET_BANDWIDTH_STATS') {
-    chrome.storage.local.set({
-      [STORAGE_KEYS.BANDWIDTH_STATS]: {
-        totalBytesSaved: 0,
-        sessionsCount: 0,
-        lastUpdated: Date.now(),
-      },
-    }).then(() => sendResponse({ success: true }));
+
+  if (message.type === "RESET_BANDWIDTH_STATS") {
+    chrome.storage.local
+      .set({
+        [STORAGE_KEYS.BANDWIDTH_STATS]: {
+          totalBytesSaved: 0,
+          sessionsCount: 0,
+          lastUpdated: Date.now(),
+        },
+      })
+      .then(() => sendResponse({ success: true }));
     return true;
   }
-  
-  if (message.type === 'GET_BUILD_CACHE') {
-    getBuildSizeCache().then(cache => sendResponse(cache));
+
+  if (message.type === "GET_BUILD_CACHE") {
+    getBuildSizeCache().then((cache) => sendResponse(cache));
     return true;
   }
 });
 
-console.log('🌿 Sustainable Browser background script loaded');
+console.log("🌿 Sustainable Browser background script loaded");
