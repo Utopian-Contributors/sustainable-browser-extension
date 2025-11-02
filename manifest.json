@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Sustainable Browser",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Intercepts CDN requests and serves local dependencies for sustainable browsing",
   "permissions": [
     "declarativeNetRequest",

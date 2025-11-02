@@ -8,6 +8,8 @@ interface AnalyzedDependency {
   name: string;
   version: string;
   url: string;
+  downloaded: boolean;
+  transformed: boolean;
   peerContext?: { [peerName: string]: string };
   peerDependencies?: { [packageName: string]: string };
   depth: number;
@@ -17,6 +19,8 @@ interface DependencyAnalysisResult {
   packages: AnalyzedDependency[]; // Packages to download with their peer context
   urlToFile: { [url: string]: string }; // URL -> filename mapping
   availableVersions: { [packageName: string]: string[] };
+  relativeImports?: { [depNameVersion: string]: any }; 
+  standaloneSubpaths?: { [packageName: string]: any };
 }
 
 interface DependencyInfo {
@@ -111,8 +115,17 @@ export class DependencyDownloader {
 
     const { packages } = this.dependencyAnalysis;
 
+    let skippedCount = 0;
+    let downloadedCount = 0;
+
     // Packages are already sorted by depth in the analysis
     for (const pkg of packages) {
+      // Skip if already downloaded
+      if (pkg.downloaded) {
+        skippedCount++;
+        continue;
+      }
+
       const pkgKey = pkg.peerContext
         ? `${pkg.name}@${pkg.version} (depth ${
             pkg.depth
@@ -130,11 +143,18 @@ export class DependencyDownloader {
         if (pkg.peerContext && Object.keys(pkg.peerContext).length > 0) {
           await this.createPeerContextCopy(depInfo, pkg.peerContext);
         }
+
+        // Mark as downloaded and update the index immediately
+        pkg.downloaded = true;
+        this.saveIndexLookup();
+        downloadedCount++;
       } catch (error) {
         console.error(`    ❌ Failed to download ${pkg.url}:`, error);
         throw error;
       }
     }
+
+    console.log(`\n  📊 Download summary: ${downloadedCount} downloaded, ${skippedCount} skipped (already downloaded)`);
   }
 
   private async createPeerContextCopy(

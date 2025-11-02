@@ -31,6 +31,8 @@ export interface AnalyzedDependency {
   name: string;
   version: string;
   url: string;
+  downloaded: boolean;
+  transformed: boolean;
   peerContext?: { [peerName: string]: string };
   peerDependencies?: PeerDependencies;
   depth: number; // For sorting by dependency order
@@ -48,6 +50,8 @@ export class DependencyAnalyzer {
   private outputPath: string;
   private packageInfoCache: Map<string, PackageInfo[]> = new Map();
   private availableVersions: Map<string, string[]> = new Map();
+  private existingAnalysis: DependencyAnalysisResult | null = null;
+  private existingPackageKeys: Set<string> = new Set();
 
   constructor(
     mappingsPath: string,
@@ -58,7 +62,11 @@ export class DependencyAnalyzer {
   }
 
   async analyzeDependencies(): Promise<void> {
-    console.log("🔍 Starting dependency analysis...\n");
+    console.log("🔍 Starting incremental dependency analysis...\n");
+
+    // Step 0: Load existing analysis if it exists
+    console.log("📖 Loading existing analysis...");
+    this.loadExistingAnalysis();
 
     // Step 1: Gather package information including peer dependencies
     console.log("📦 Gathering package information and peer dependencies...");
@@ -78,8 +86,61 @@ export class DependencyAnalyzer {
 
     console.log("\n✅ Dependency analysis complete!");
     console.log(
-      `📊 Total dependencies to download: ${sortedDependencies.length}`
+      `📊 Total dependencies: ${sortedDependencies.length} (${
+        this.existingPackageKeys.size
+      } existing, ${
+        sortedDependencies.length
+          ? sortedDependencies.length - this.existingPackageKeys.size
+          : 0
+      } new)`
     );
+  }
+
+  private loadExistingAnalysis(): void {
+    if (fs.existsSync(this.outputPath)) {
+      try {
+        const content = fs.readFileSync(this.outputPath, "utf8");
+        this.existingAnalysis = JSON.parse(content);
+
+        // Build a set of existing package keys for quick lookup
+        for (const pkg of this.existingAnalysis!.packages) {
+          const key = this.makePackageKey(pkg);
+          this.existingPackageKeys.add(key);
+        }
+
+        // Load existing availableVersions
+        if (this.existingAnalysis!.availableVersions) {
+          for (const [pkgName, versions] of Object.entries(
+            this.existingAnalysis!.availableVersions
+          )) {
+            this.availableVersions.set(pkgName, versions);
+          }
+        }
+
+        console.log(
+          `  ✅ Loaded existing analysis with ${
+            this.existingAnalysis!.packages.length
+          } packages`
+        );
+      } catch (error) {
+        console.log(`  ⚠️  Failed to load existing analysis: ${error}`);
+        this.existingAnalysis = null;
+      }
+    } else {
+      console.log("  ℹ️  No existing analysis found, will create new one");
+    }
+  }
+
+  private makePackageKey(pkg: AnalyzedDependency): string {
+    // Create a unique key for a package including peer context
+    const peerContextSuffix = pkg.peerContext
+      ? "_" +
+        Object.entries(pkg.peerContext)
+          .map(([n, v]) => `${n}-${v}`)
+          .sort()
+          .join("_")
+      : "";
+    return `${pkg.name}@${pkg.version}${peerContextSuffix}`;
   }
 
   private async gatherPackageInfo(): Promise<void> {
@@ -96,6 +157,11 @@ export class DependencyAnalyzer {
         }
 
         console.log(`  🔍 Analyzing ${depName}...`);
+
+        // Get existing versions for this package
+        const existingVersions = this.availableVersions.get(depName) || [];
+
+        // Fetch available versions from npm
         const foundVersions = await this.getMultipleVersions(depName);
         const versions = (
           await Promise.all(
@@ -104,10 +170,37 @@ export class DependencyAnalyzer {
             )
           )
         ).filter(Boolean) as string[];
-        this.availableVersions.set(depName, versions);
+
+        // Merge with existing versions (union of both sets)
+        const allVersions = [
+          ...new Set([...existingVersions, ...versions]),
+        ].sort((a, b) => semver.rcompare(a, b));
+        this.availableVersions.set(depName, allVersions);
+
+        // Identify new versions that need analysis
+        const newVersions = versions.filter(
+          (v) => !existingVersions.includes(v)
+        );
+        if (newVersions.length > 0) {
+          console.log(
+            `    🆕 Found ${
+              newVersions.length
+            } new version(s): ${newVersions.join(", ")}`
+          );
+        } else {
+          console.log(
+            `    ✅ All versions already analyzed (${existingVersions.length} total)`
+          );
+          continue;
+        }
+
         const packageInfoList: PackageInfo[] = [];
 
-        for (const version of versions) {
+        // Only analyze new versions, not already analyzed ones
+        const versionsToAnalyze =
+          newVersions.length > 0 ? newVersions : versions;
+
+        for (const version of versionsToAnalyze) {
           // Get peer dependencies from npm registry
           const peerDeps = await this.getPeerDependencies(depName, version);
 
@@ -150,10 +243,15 @@ export class DependencyAnalyzer {
           );
         }
 
-        this.packageInfoCache.set(depName, packageInfoList);
+        // Only store package info if we have new versions to analyze
+        if (packageInfoList.length > 0) {
+          this.packageInfoCache.set(depName, packageInfoList);
+        }
 
-        // Handle standalone subpaths for this package
-        await this.handleStandaloneSubpaths(depName, versions);
+        // Handle standalone subpaths for this package (only for new versions)
+        if (newVersions.length > 0) {
+          await this.handleStandaloneSubpaths(depName, newVersions);
+        }
       } catch (error) {
         console.error(`❌ Failed to analyze ${depName}:`, error);
       }
@@ -194,9 +292,13 @@ export class DependencyAnalyzer {
 
     for (const subpathConfig of subpathConfigs) {
       // Handle both string and SubpathConfig formats
-      const subpathName = typeof subpathConfig === 'string' ? subpathConfig : subpathConfig.name;
-      const fromVersion = typeof subpathConfig === 'string' ? undefined : subpathConfig.fromVersion;
-      
+      const subpathName =
+        typeof subpathConfig === "string" ? subpathConfig : subpathConfig.name;
+      const fromVersion =
+        typeof subpathConfig === "string"
+          ? undefined
+          : subpathConfig.fromVersion;
+
       const fullSubpathName = `${parentPackage}/${subpathName}`;
 
       // Check if the subpath has its own entry in packages
@@ -210,7 +312,7 @@ export class DependencyAnalyzer {
       // Filter versions based on fromVersion constraint if specified
       let applicableVersions = versions;
       if (fromVersion) {
-        applicableVersions = versions.filter(version => {
+        applicableVersions = versions.filter((version) => {
           try {
             return semver.satisfies(version, fromVersion);
           } catch (error) {
@@ -220,14 +322,14 @@ export class DependencyAnalyzer {
             return false;
           }
         });
-        
+
         if (applicableVersions.length === 0) {
           console.log(
             `    ⏭️  Skipping ${fullSubpathName}: no versions match constraint ${fromVersion}`
           );
           continue;
         }
-        
+
         console.log(
           `    🔍 Filtered ${fullSubpathName} to ${applicableVersions.length}/${versions.length} versions matching ${fromVersion}`
         );
@@ -290,6 +392,8 @@ export class DependencyAnalyzer {
             url,
             peerDependencies: packageInfo.peerDependencies || {},
             depth: 0,
+            downloaded: false,
+            transformed: false,
           };
           packages.push(baseDep);
         }
@@ -312,6 +416,8 @@ export class DependencyAnalyzer {
                 name: depName,
                 version: packageInfo.version,
                 url: `${url}?${peerContextKey}`,
+                downloaded: false,
+                transformed: false,
                 peerContext,
                 peerDependencies: packageInfo.peerDependencies,
                 depth: 0, // Will be calculated
@@ -412,7 +518,7 @@ export class DependencyAnalyzer {
     });
   }
 
-  private saveDependencyAnalysis(packages: AnalyzedDependency[]): void {
+  private saveDependencyAnalysis(newPackages: AnalyzedDependency[]): void {
     // Convert availableVersions Map to object
     const availableVersionsObject: { [packageName: string]: string[] } = {};
     for (const [packageName, versions] of this.availableVersions.entries()) {
@@ -427,7 +533,7 @@ export class DependencyAnalyzer {
     // 1. Packages with peer context (these are the ones we want)
     // 2. Packages without peer dependencies (these don't need peer context)
     // 3. Packages whose peer dependencies are all internal (within sameVersionRequired group)
-    const filteredPackages = packages.filter((dep) => {
+    const filteredNewPackages = newPackages.filter((dep) => {
       // If has peer context, keep it
       if (dep.peerContext && Object.keys(dep.peerContext).length > 0) {
         return true;
@@ -463,8 +569,33 @@ export class DependencyAnalyzer {
       return !hasExternalManagedPeers;
     });
 
+    // Merge with existing packages
+    let allPackages: AnalyzedDependency[];
+    if (this.existingAnalysis && this.existingAnalysis.packages.length > 0) {
+      // Create a map of new packages by their key
+      const newPackageMap = new Map<string, AnalyzedDependency>();
+      for (const pkg of filteredNewPackages) {
+        newPackageMap.set(this.makePackageKey(pkg), pkg);
+      }
+
+      // Keep all existing packages, replace with new version if exists
+      allPackages = this.existingAnalysis.packages.map((existingPkg) => {
+        const key = this.makePackageKey(existingPkg);
+        return newPackageMap.get(key) || existingPkg;
+      });
+
+      // Add truly new packages (not replacements)
+      for (const [key, pkg] of newPackageMap.entries()) {
+        if (!this.existingPackageKeys.has(key)) {
+          allPackages.push(pkg);
+        }
+      }
+    } else {
+      allPackages = filteredNewPackages;
+    }
+
     // Sort by depth to ensure proper download order (peers first, then dependents)
-    const sortedDeps = filteredPackages.sort((a, b) => {
+    const sortedDeps = allPackages.sort((a, b) => {
       if (a.depth !== b.depth) {
         return a.depth - b.depth;
       }
@@ -473,7 +604,7 @@ export class DependencyAnalyzer {
 
     const analysis: DependencyAnalysisResult = {
       packages: sortedDeps,
-      urlToFile: {}, // Will be populated during download phase
+      urlToFile: this.existingAnalysis?.urlToFile || {}, // Preserve existing urlToFile mappings
       availableVersions: availableVersionsObject,
       standaloneSubpaths: this.cdnMappings.standaloneSubpaths || {},
     };
@@ -485,21 +616,26 @@ export class DependencyAnalyzer {
 
     fs.writeFileSync(this.outputPath, JSON.stringify(analysis, null, 2));
 
+    const newCount = filteredNewPackages.length;
+    const existingCount = this.existingAnalysis?.packages.length || 0;
+
     console.log(`📄 Analysis saved: ${this.outputPath}`);
     console.log(
-      `   ${filteredPackages.length} dependencies across ${
+      `   ${
+        sortedDeps.length
+      } total dependencies (${existingCount} existing, ${newCount} new) across ${
         Object.keys(availableVersionsObject).length
       } packages`
     );
     console.log(
       `   (Filtered out ${
-        packages.length - filteredPackages.length
-      } base versions)`
+        newPackages.length - filteredNewPackages.length
+      } base versions from new packages)`
     );
 
     // Print depth distribution
     const depthDistribution = new Map<number, number>();
-    for (const dep of filteredPackages) {
+    for (const dep of sortedDeps) {
       depthDistribution.set(
         dep.depth,
         (depthDistribution.get(dep.depth) ?? 0) + 1
