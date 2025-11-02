@@ -13,7 +13,7 @@ interface DependencyInfo {
   peerContext?: { [peerName: string]: string };
 }
 
-interface LeafManifest {
+interface UrlIndex {
   [esmUrlWithPeerContext: string]: string;
 }
 
@@ -36,7 +36,7 @@ interface AnalyzedDependency {
 
 interface CompleteManifest {
   packages: AnalyzedDependency[];
-  urlToFile: LeafManifest;
+  urlToFile: UrlIndex;
   relativeImports: RelativeImportMapping;
   availableVersions: { [packageName: string]: string[] };
 }
@@ -45,15 +45,15 @@ export class RelativeImportProcessor {
   private downloadedDeps: Map<string, DependencyInfo> = new Map();
   private relativeImportMappings: RelativeImportMapping = {};
   private baseUrlToContextualUrls: Map<string, string[]> = new Map();
-  private manifestPath: string;
+  private lookupPath: string;
   private cdnMappingsPath: string;
   private sameVersionRequired: string[][] = [];
 
   constructor(
-    manifestPath: string = "./dependencies/index.lookup.json",
+    lookupPath: string = "./dependencies/index.lookup.json",
     cdnMappingsPath: string = "./cdn-mappings.json"
   ) {
-    this.manifestPath = manifestPath;
+    this.lookupPath = lookupPath;
     this.cdnMappingsPath = cdnMappingsPath;
   }
 
@@ -61,7 +61,7 @@ export class RelativeImportProcessor {
     console.log("🔗 Processing relative import mappings...");
 
     // Load existing manifest
-    const manifest = this.loadManifest();
+    const lookup = this.loadIndexLookup();
     const cdnMappings = this.loadCdnMappings();
     this.sameVersionRequired = cdnMappings.sameVersionRequired || [];
 
@@ -77,20 +77,20 @@ export class RelativeImportProcessor {
     console.log("🔗 Generating relative import mappings...");
     this.generateRelativeImportMappings();
 
-    // Update manifest with new relative import mappings
-    manifest.relativeImports = this.relativeImportMappings;
-    this.saveManifest(manifest);
+    // Update lookup with new relative import mappings
+    lookup.relativeImports = this.relativeImportMappings;
+    this.saveLookupIndex(lookup);
 
     console.log("✅ Relative import processing complete!");
   }
 
-  private loadManifest(): CompleteManifest {
-    if (!fs.existsSync(this.manifestPath)) {
-      throw new Error(`Manifest not found at ${this.manifestPath}`);
+  private loadIndexLookup(): CompleteManifest {
+    if (!fs.existsSync(this.lookupPath)) {
+      throw new Error(`Manifest not found at ${this.lookupPath}`);
     }
 
-    const manifestContent = fs.readFileSync(this.manifestPath, "utf8");
-    return JSON.parse(manifestContent);
+    const lookupIndexContent = fs.readFileSync(this.lookupPath, "utf8");
+    return JSON.parse(lookupIndexContent);
   }
 
   private loadCdnMappings(): { sameVersionRequired: string[][] } {
@@ -103,11 +103,11 @@ export class RelativeImportProcessor {
   }
 
   private async rebuildDependencyInfo(): Promise<void> {
-    const manifest = this.loadManifest();
-    const dependenciesDir = path.dirname(this.manifestPath);
+    const lookup = this.loadIndexLookup();
+    const dependenciesDir = path.dirname(this.lookupPath);
 
     // Iterate through all urlToFile entries to load all downloaded files
-    for (const [esmUrl, filename] of Object.entries(manifest.urlToFile)) {
+    for (const [esmUrl, filename] of Object.entries(lookup.urlToFile)) {
       const filePath = path.join(dependenciesDir, filename);
 
       if (fs.existsSync(filePath)) {
@@ -410,18 +410,18 @@ export class RelativeImportProcessor {
     return count;
   }
 
-  private saveManifest(manifest: CompleteManifest): void {
-    const manifestContent = JSON.stringify(manifest, null, 2);
-    fs.writeFileSync(this.manifestPath, manifestContent);
+  private saveLookupIndex(lookup: CompleteManifest): void {
+    const lookupContent = JSON.stringify(lookup, null, 2);
+    fs.writeFileSync(this.lookupPath, lookupContent);
 
-    console.log(`📄 Updated manifest: ${this.manifestPath}`);
+    console.log(`📄 Updated lookup index: ${this.lookupPath}`);
 
     const totalRelativeMappings = this.countNestedMappings(
-      manifest.relativeImports
+      lookup.relativeImports
     );
     console.log(
       `   Contains ${totalRelativeMappings} relative import mappings across ${
-        Object.keys(manifest.relativeImports).length
+        Object.keys(lookup.relativeImports).length
       } dependencies`
     );
   }
