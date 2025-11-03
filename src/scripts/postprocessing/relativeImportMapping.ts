@@ -1,7 +1,12 @@
 import fs from "fs";
 import path from "path";
 import { URL } from "url";
-import { DependencyUtils } from "../utils";
+import { LookupIndex, NestedRelativeImports, RelativeImportMapping } from "../interfaces";
+import {
+  buildDepNameVersionKeyWithPeerContext,
+  DependencyUtils,
+  parseDepFilename,
+} from "../utils";
 
 interface DependencyInfo {
   name: string;
@@ -17,34 +22,11 @@ interface UrlIndex {
   [esmUrlWithPeerContext: string]: string;
 }
 
-interface RelativeImportMapping {
-  [depNameVersion: string]: NestedRelativeImports;
-}
-
-interface NestedRelativeImports {
-  [pathSegment: string]: NestedRelativeImports | string;
-}
-
-interface AnalyzedDependency {
-  name: string;
-  version: string;
-  url: string;
-  peerContext?: { [peerName: string]: string };
-  peerDependencies?: { [packageName: string]: string };
-  depth: number;
-}
-
-interface CompleteManifest {
-  packages: AnalyzedDependency[];
-  urlToFile: UrlIndex;
-  relativeImports: RelativeImportMapping;
-  availableVersions: { [packageName: string]: string[] };
-}
-
 export class RelativeImportProcessor {
   private downloadedDeps: Map<string, DependencyInfo> = new Map();
   private relativeImportMappings: RelativeImportMapping = {};
   private baseUrlToContextualUrls: Map<string, string[]> = new Map();
+  private lookup?: LookupIndex;
   private lookupPath: string;
   private cdnMappingsPath: string;
   private sameVersionRequired: string[][] = [];
@@ -65,6 +47,21 @@ export class RelativeImportProcessor {
     const cdnMappings = this.loadCdnMappings();
     this.sameVersionRequired = cdnMappings.sameVersionRequired || [];
 
+    // Preserve lookup in the instance for later checks
+    this.lookup = lookup;
+
+    // Start from any existing relativeImport mappings (merge mode)
+    if (lookup.relativeImports) {
+      this.relativeImportMappings = JSON.parse(
+        JSON.stringify(lookup.relativeImports)
+      );
+      console.log(
+        `  ✅ Loaded ${
+          Object.keys(this.relativeImportMappings).length
+        } existing dependency mappings`
+      );
+    }
+
     // Rebuild downloadedDeps from the files
     console.log("📚 Rebuilding dependency information from files...");
     await this.rebuildDependencyInfo();
@@ -77,14 +74,18 @@ export class RelativeImportProcessor {
     console.log("🔗 Generating relative import mappings...");
     this.generateRelativeImportMappings();
 
-    // Update lookup with new relative import mappings
-    lookup.relativeImports = this.relativeImportMappings;
+    // Update lookup with new relative import mappings (shallow merge)
+    lookup.relativeImports = {
+      ...lookup.relativeImports,
+      ...this.relativeImportMappings,
+    };
+
     this.saveLookupIndex(lookup);
 
     console.log("✅ Relative import processing complete!");
   }
 
-  private loadIndexLookup(): CompleteManifest {
+  private loadIndexLookup(): LookupIndex {
     if (!fs.existsSync(this.lookupPath)) {
       throw new Error(`Manifest not found at ${this.lookupPath}`);
     }
@@ -133,6 +134,41 @@ export class RelativeImportProcessor {
           isLeaf: !DependencyUtils.hasEsmShExports(content),
           peerContext,
         };
+
+        // If the lookup contains a package entry for this dependency and it's already transformed, skip it
+        if (this.lookup && Array.isArray(this.lookup.packages)) {
+          // Use the parsed filename for robust matching (consistent with importTransforming)
+          const parsed = parseDepFilename(filename);
+          if (parsed) {
+            const base = parsed.baseDepNameVersion; // e.g. framer-motion@10.16.16
+            const atIdx = base.lastIndexOf("@");
+            if (atIdx > 0) {
+              const parsedName = base.substring(0, atIdx);
+              const parsedVersion = base.substring(atIdx + 1);
+              // convert parsed.peerContext (['react@18.1.0']) into an object for comparison
+              const parsedPeerObj: { [k: string]: string } = {};
+              for (const p of parsed.peerContext) {
+                const idx = p.lastIndexOf("@");
+                if (idx > 0) {
+                  parsedPeerObj[p.substring(0, idx)] = p.substring(idx + 1);
+                }
+              }
+
+              const matchedPkg = this.lookup.packages.find((pkg) => {
+                if (pkg.name !== parsedName) return false;
+                if (pkg.version !== parsedVersion) return false;
+                return pkg.transformed;
+              });
+
+              if (matchedPkg && matchedPkg.transformed) {
+                console.log(
+                  `  ⏭️  Skipping ${name}@${version} (package marked transformed)`
+                );
+                continue;
+              }
+            }
+          }
+        }
 
         this.downloadedDeps.set(esmUrl, depInfo);
         console.log(`  📄 Loaded: ${name}@${version} (${filename})`);
@@ -195,24 +231,19 @@ export class RelativeImportProcessor {
       const uniquePeerContext = Object.entries(depInfo.peerContext ?? {})
         .map(([name, version]) => {
           // Exclude if it's the package itself
-          if (name === depInfo.name) {
-            return false;
-          }
+          if (name === depInfo.name) return false;
           // Exclude if it's in the same sameVersionRequired group
-          if (sameVersionGroup && sameVersionGroup.includes(name)) {
-            return false;
-          }
-          return `${name}-${version}`;
+          if (sameVersionGroup && sameVersionGroup.includes(name)) return false;
+          // Return as name@version so helper normalizes formatting
+          return `${name}@${version}`;
         })
-        .filter(Boolean);
+        .filter(Boolean) as string[];
 
-      // Build dep key with peer context if it exists
-      let depKey = `${depInfo.name}@${depInfo.version}`;
-      if (uniquePeerContext && uniquePeerContext.length > 0) {
-        // Add peer context to the key: framer-motion@12.23.23_react-19.2.0
-        const peerContextSuffix = uniquePeerContext.join("_");
-        depKey = `${depKey}_${peerContextSuffix}`;
-      }
+      // Build dep key with peer context if it exists using shared helper
+      const depKey = buildDepNameVersionKeyWithPeerContext(
+        `${depInfo.name}@${depInfo.version}`,
+        uniquePeerContext
+      );
 
       console.log(
         `  🔍 Processing ${depKey} (${originalImports.length} imports)`
@@ -269,10 +300,14 @@ export class RelativeImportProcessor {
             if (!matchedUrl) {
               const baseUrl = absoluteUrl.split("?")[0];
               const availableUrls =
-                (this.baseUrlToContextualUrls.get(baseUrl) || []);
-              matchedUrl = availableUrls.find((url) => {
-                return this.downloadedDeps.has(url) && url === absoluteUrl.split("?")[0];
-              }) ?? null;
+                this.baseUrlToContextualUrls.get(baseUrl) || [];
+              matchedUrl =
+                availableUrls.find((url) => {
+                  return (
+                    this.downloadedDeps.has(url) &&
+                    url === absoluteUrl.split("?")[0]
+                  );
+                }) ?? null;
             }
 
             if (!matchedUrl) {
@@ -410,20 +445,20 @@ export class RelativeImportProcessor {
     return count;
   }
 
-  private saveLookupIndex(lookup: CompleteManifest): void {
-    const lookupContent = JSON.stringify(lookup, null, 2);
-    fs.writeFileSync(this.lookupPath, lookupContent);
+  private saveLookupIndex(lookup: LookupIndex): void {
+      const lookupContent = JSON.stringify(lookup, null, 2);
+      fs.writeFileSync(this.lookupPath, lookupContent);
 
-    console.log(`📄 Updated lookup index: ${this.lookupPath}`);
+      console.log(`📄 Updated lookup index: ${this.lookupPath}`);
 
-    const totalRelativeMappings = this.countNestedMappings(
-      lookup.relativeImports
-    );
-    console.log(
-      `   Contains ${totalRelativeMappings} relative import mappings across ${
-        Object.keys(lookup.relativeImports).length
-      } dependencies`
-    );
+      const totalRelativeMappings = this.countNestedMappings(
+        lookup.relativeImports
+      );
+      console.log(
+        `   Contains ${totalRelativeMappings} relative import mappings across ${
+          Object.keys(lookup.relativeImports).length
+        } dependencies`
+      );
   }
 }
 

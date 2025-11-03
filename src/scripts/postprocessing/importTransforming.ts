@@ -1,66 +1,91 @@
 import * as fs from "fs";
 import * as path from "path";
-import { DependencyUtils } from "../utils";
-
-interface Manifest {
-  urlToFile: { [esmUrl: string]: string }; // Maps esm.sh URL -> local file path
-  relativeImports: {
-    [depNameVersion: string]: NestedRelativeImports;
-  }; // Maps dependency name+version -> nested relative imports
-}
-
-interface NestedRelativeImports {
-  [pathSegment: string]: NestedRelativeImports | string; // Nested structure where final values are URLs
-}
+import { AnalyzedDependency, LookupIndex, NestedRelativeImports } from "../interfaces";
+import { buildDepNameVersionKeyWithPeerContext, DependencyUtils, parseDepFilename } from "../utils";
 
 export class DependencyImportProcessor {
-  private manifest: Manifest;
+  private lookupIndex: LookupIndex;
   private outputDir: string;
+  private lookupIndexPath: string;
+  private processedPackages: Set<AnalyzedDependency> = new Set();
 
   constructor(
-    manifestPath: string = "./dependencies/index.lookup.json",
+    lookupIndexPath: string = "./dependencies/index.lookup.json",
     outputDir: string = "./dependencies"
   ) {
     this.outputDir = outputDir;
+    this.lookupIndexPath = lookupIndexPath;
 
-    if (!fs.existsSync(manifestPath)) {
-      throw new Error(`Manifest file not found: ${manifestPath}`);
+    if (!fs.existsSync(lookupIndexPath)) {
+      throw new Error(`LookupIndex file not found: ${lookupIndexPath}`);
     }
 
-    this.manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    this.lookupIndex = JSON.parse(fs.readFileSync(lookupIndexPath, "utf8"));
   }
 
   processAllDependencies(): void {
-    console.log("🔧 Starting dependency postprocessing...\n");
+    console.log("🔧 Starting incremental dependency postprocessing...\n");
 
     const files = fs.readdirSync(this.outputDir);
     const jsFiles = files.filter((f) => f.endsWith(".js"));
 
     let totalFiles = 0;
+    let skippedFiles = 0;
+    let processedFiles = 0;
     let filesWithImports = 0;
     let totalReplacements = 0;
 
+    // We'll resolve package entries directly from filenames when needed
+    // (keeps logic simple and avoids building a large map)
+
     for (const filename of jsFiles) {
       totalFiles++;
+      
+      // Resolve package entry for this filename (by parsing the filename)
+      let pkg;
+      const parsed = parseDepFilename(filename);
+      if (parsed) {
+        const baseDepNameVersion = parsed.baseDepNameVersion;
+        const atIdx = baseDepNameVersion.lastIndexOf("@");
+        if (atIdx > 0) {
+          const pkgName = baseDepNameVersion.substring(0, atIdx);
+          const pkgVersion = baseDepNameVersion.substring(atIdx + 1);
+          pkg = this.lookupIndex.packages.find(
+            (p) => p.name === pkgName && p.version === pkgVersion
+          );
+        }
+      }
+
+      if (pkg && pkg.transformed) {
+        skippedFiles++;
+        continue;
+      }
+
       const filePath = path.join(this.outputDir, filename);
       let content = fs.readFileSync(filePath, "utf8");
       const originalImports =
         DependencyUtils.extractRawImportsWithBabel(content);
 
-      if (originalImports.length === 0) continue;
+      if (originalImports.length === 0) {
+        // Track this package for marking as transformed later
+        if (pkg) {
+          this.processedPackages.add(pkg);
+        }
+        continue;
+      }
 
       filesWithImports++;
+      processedFiles++;
       console.log(`📄 ${filename} (${originalImports.length} imports):`);
 
       // Extract dependency name+version and peer context from filename to find the correct relative imports group
-      const depFilenameInfo =
-        this.extractDepNameVersionWithPeerContextFromFilename(filename);
-      const baseDepNameVersion = depFilenameInfo ? depFilenameInfo[0] : null;
-      const peerContext = depFilenameInfo ? depFilenameInfo[1] : [];
+      const depFilenameInfo = parseDepFilename(filename);
+      const baseDepNameVersion = depFilenameInfo ? depFilenameInfo.baseDepNameVersion : null;
+      const peerContext = depFilenameInfo ? depFilenameInfo.peerContext : [];
 
       // Build the full key including peer context for looking up in relativeImports
       const depNameVersionKey = baseDepNameVersion
-        ? this.buildDepNameVersionKeyWithPeerContext(
+        ? buildDepNameVersionKeyWithPeerContext(
             baseDepNameVersion,
             peerContext
           )
@@ -77,18 +102,18 @@ export class DependencyImportProcessor {
 
         if (originalImport.startsWith("https://esm.sh/")) {
           // Replace absolute esm.sh imports with local dependency files
-          if (this.manifest.urlToFile[originalImport]) {
-            const filename = this.manifest.urlToFile[originalImport];
+          if (this.lookupIndex.urlToFile[originalImport]) {
+            const filename = this.lookupIndex.urlToFile[originalImport];
             newImport = `/dependencies/${filename}`;
             console.log(`  - esm.sh: "${originalImport}" → "${newImport}"`);
           }
         } else if (originalImport.startsWith("/")) {
           // Replace absolute paths with local dependency files
-          // Find the best matching URL in manifest and use its filename
+          // Find the best matching URL in lookup index and use its filename
           let matchingUrl: string | null = null;
 
           // First try exact match
-          for (const url of Object.keys(this.manifest.urlToFile)) {
+          for (const url of Object.keys(this.lookupIndex.urlToFile)) {
             if (url.includes(originalImport)) {
               matchingUrl = url;
               break;
@@ -100,8 +125,8 @@ export class DependencyImportProcessor {
             matchingUrl = this.findBestMatchingUrl(originalImport);
           }
 
-          if (matchingUrl && this.manifest.urlToFile[matchingUrl]) {
-            const filename = this.manifest.urlToFile[matchingUrl];
+          if (matchingUrl && this.lookupIndex.urlToFile[matchingUrl]) {
+            const filename = this.lookupIndex.urlToFile[matchingUrl];
             newImport = `/dependencies/${filename}`;
             console.log(`  - absolute: "${originalImport}" → "${newImport}"`);
           } else {
@@ -125,7 +150,7 @@ export class DependencyImportProcessor {
           originalImport.startsWith("./") ||
           originalImport.startsWith("../")
         ) {
-          // Replace relative imports with dependency paths using manifest
+          // Replace relative imports with dependency paths using lookup index
           let absoluteUrl: string | null = null;
 
           console.debug(
@@ -138,12 +163,12 @@ export class DependencyImportProcessor {
           // Look up relative import in the nested dependency structure using the full key with peer context
           if (
             depNameVersionKey &&
-            this.manifest.relativeImports[depNameVersionKey]
+            this.lookupIndex.relativeImports[depNameVersionKey]
           ) {
             try {
               absoluteUrl = this.getNestedImportPath(
                 originalImport,
-                this.manifest.relativeImports[depNameVersionKey],
+                this.lookupIndex.relativeImports[depNameVersionKey],
                 filename
               );
             } catch (error) {
@@ -154,8 +179,8 @@ export class DependencyImportProcessor {
             }
           }
 
-          if (absoluteUrl && this.manifest.urlToFile[absoluteUrl]) {
-            const targetFilename = this.manifest.urlToFile[absoluteUrl];
+          if (absoluteUrl && this.lookupIndex.urlToFile[absoluteUrl]) {
+            const targetFilename = this.lookupIndex.urlToFile[absoluteUrl];
             newImport = `/dependencies/${targetFilename}`;
             console.log(`  - relative: "${originalImport}" → "${newImport}"`);
           } else {
@@ -212,142 +237,43 @@ export class DependencyImportProcessor {
       if (modified) {
         fs.writeFileSync(filePath, content);
       }
+
+      // Track this package for marking as transformed later
+      if (pkg) {
+        this.processedPackages.add(pkg);
+      }
     }
 
-    console.log(`Total files processed: ${totalFiles}`);
-    console.log(`Files with imports: ${filesWithImports}`);
-    console.log(`Total replacements made: ${totalReplacements}`);
+    console.log(`\n📊 Transformation summary:`);
+    console.log(`   Total files: ${totalFiles}`);
+    console.log(`   Skipped (already transformed): ${skippedFiles}`);
+    console.log(`   Processed: ${processedFiles}`);
+    console.log(`   Files with imports: ${filesWithImports}`);
+    console.log(`   Total replacements made: ${totalReplacements}`);
+
+    // Mark all processed packages as transformed
+    if (this.processedPackages.size > 0) {
+      console.log(`\n✅ Marking ${this.processedPackages.size} packages as transformed...`);
+      for (const pkg of this.processedPackages) {
+        pkg.transformed = true;
+      }
+      this.saveLookupIndex();
+      console.log(`   Saved lookup index: ${this.lookupIndexPath}`);
+    }
 
     const totalRelativeMappings = this.countNestedMappings(
-      this.manifest.relativeImports
+      this.lookupIndex.relativeImports
     );
     console.log(
-      `Relative import mappings available: ${totalRelativeMappings} across ${
-        Object.keys(this.manifest.relativeImports).length
+      `\nℹ️  Relative import mappings available: ${totalRelativeMappings} across ${
+        Object.keys(this.lookupIndex.relativeImports).length
       } dependencies`
     );
   }
 
-  private extractDepNameVersionWithPeerContextFromFilename(
-    filename: string
-  ): [string, string[]] | null {
-    // Format is: packagename@version_peercontext_hash.js or packagename@version_hash.js
-    // Returns [packageName@version, [peer@version, ...]] or null
-    // Examples:
-    //   "framer-motion@10.16.16_react-18.1.0_006ab095.js" -> ["framer-motion@10.16.16", ["react@18.1.0"]]
-    //   "react@19.2.0_165279c2.js" -> ["react@19.2.0", []]
-    //   "@antfu-ni@25.0.0_e59d44ed.js" -> ["@antfu/ni@25.0.0", []]
-    //   "node@latest_00eee0fc.js" -> ["node@latest", []]
-
-    // Match pattern: packagename@version followed by underscore and hash
-    // Package name can include scope (e.g., @emotion/is-prop-valid or @antfu/ni)
-    // In filenames, slashes are replaced with dashes: @antfu/ni -> @antfu-ni
-    // Two patterns:
-    // 1. With peer context: packagename@version_peercontext_hash.js
-    // 2. Without peer context: packagename@version_hash.js
-
-    let packageNameVersion: string;
-    let peerContextPart: string = "";
-    let match;
-
-    // Try to match with peer context first
-    // For scoped packages: @scope-package@version_peer_hash.js
-    // For regular packages: package@version_peer_hash.js
-    // Version can be numeric (19.2.0) or a tag (latest, next, canary)
-    if (filename.startsWith("@")) {
-      // Scoped package: @scope-package@version...
-      match = filename.match(/^(@[^-]+-[^@]+@[^_]+)_(.*?)_([^_]+)\.js$/);
-    } else {
-      // Regular package: package@version...
-      match = filename.match(/^([^@]+@[^_]+)_(.*?)_([^_]+)\.js$/);
-    }
-
-    if (match) {
-      // Has peer context
-      packageNameVersion = match[1];
-      peerContextPart = match[2];
-    } else {
-      // Try without peer context (just packagename@version_hash.js)
-      if (filename.startsWith("@")) {
-        // Scoped package: @scope-package@version_hash.js
-        match = filename.match(/^(@[^-]+-[^@]+@[^_]+)_([^_]+)\.js$/);
-      } else {
-        // Regular package: package@version_hash.js
-        match = filename.match(/^([^@]+@[^_]+)_([^_]+)\.js$/);
-      }
-      
-      if (!match) return null;
-
-      packageNameVersion = match[1];
-      peerContextPart = "";
-    }
-
-    // Convert filename format back to package name format
-    // @antfu-ni@25.0.0 -> @antfu/ni@25.0.0
-    if (packageNameVersion.startsWith("@")) {
-      // Find the position of the first dash after @ and replace it with /
-      const firstDashIndex = packageNameVersion.indexOf("-");
-      if (firstDashIndex !== -1) {
-        packageNameVersion =
-          packageNameVersion.substring(0, firstDashIndex) +
-          "/" +
-          packageNameVersion.substring(firstDashIndex + 1);
-      }
-    }
-
-    // Parse peer context if it exists
-    const peerDependencies: string[] = [];
-    if (peerContextPart) {
-      // Split by underscore and look for package@version patterns
-      // Handle both regular (react-18.1.0) and scoped packages (@emotion-is-prop-valid-1.4.0)
-      const parts = peerContextPart.split("_");
-
-      for (const part of parts) {
-        // Convert dash-separated format back to @-separated format
-        // "react-18.1.0" -> "react@18.1.0"
-        // "@emotion-is-prop-valid-1.4.0" -> "@emotion/is-prop-valid@1.4.0"
-        const atMatch = part.match(/^(.+)-([\d.]+)$/);
-        if (atMatch) {
-          let pkgName = atMatch[1];
-          const version = atMatch[2];
-          
-          // For scoped packages, replace first dash with slash
-          if (pkgName.startsWith("@")) {
-            const firstDashIndex = pkgName.indexOf("-", 1);
-            if (firstDashIndex !== -1) {
-              pkgName =
-                pkgName.substring(0, firstDashIndex) +
-                "/" +
-                pkgName.substring(firstDashIndex + 1);
-            }
-          }
-          
-          peerDependencies.push(`${pkgName}@${version}`);
-        }
-      }
-    }
-
-    return [packageNameVersion, peerDependencies];
-  }
-
-  private buildDepNameVersionKeyWithPeerContext(
-    baseDepNameVersion: string,
-    peerContext: string[]
-  ): string {
-    // Build the key used in relativeImports structure
-    // Example: "framer-motion@12.23.24" + ["react@19.2.0", "react-dom@19.2.0"]
-    //       -> "framer-motion@12.23.24_react-19.2.0_react-dom-19.2.0"
-
-    if (!peerContext || peerContext.length === 0) {
-      return baseDepNameVersion;
-    }
-
-    // Convert peer dependencies to underscore-separated format
-    const peerSuffix = peerContext
-      .map((peer) => peer.replace("@", "-").replace("/", "-"))
-      .join("_");
-
-    return `${baseDepNameVersion}_${peerSuffix}`;
+  private saveLookupIndex(): void {
+    const manifestContent = JSON.stringify(this.lookupIndex, null, 2);
+    fs.writeFileSync(this.lookupIndexPath, manifestContent);
   }
 
   private findBestMatchingUrl(importPath: string): string | null {
@@ -357,7 +283,7 @@ export class DependencyImportProcessor {
     //          "https://esm.sh/react@19.2.0/jsx-runtime" over
     //          "https://esm.sh/react@19.2.0/es2022/react.mjs"
 
-    const allUrls = Object.keys(this.manifest.urlToFile);
+    const allUrls = Object.keys(this.lookupIndex.urlToFile);
     const candidates: Array<{ url: string; score: number }> = [];
 
     // Extract package name and subpath from import
@@ -424,7 +350,7 @@ export class DependencyImportProcessor {
     packageName: string,
     subpath: string
   ): { matches: boolean; score: number } {
-    // Check if a manifest URL matches the package name and subpath
+    // Check if a lookup index URL matches the package name and subpath
     // Returns a score where higher = better match
     // Score breakdown:
     //   - Package name match: 1 point
@@ -509,7 +435,7 @@ export class DependencyImportProcessor {
     currentFilename: string
   ): string | null {
     try {
-      // Step 1: Find the current file's ESM URL from the manifest
+      // Step 1: Find the current file's ESM URL from the lookup index
       const currentFileUrl = this.findCurrentFileUrl(currentFilename);
       if (!currentFileUrl) {
         throw new Error(
@@ -539,15 +465,14 @@ export class DependencyImportProcessor {
       const absoluteUrl = new URL(relativePath, baseUrl).href;
 
       // Step 3: Extract package-name from the filename
-      const depFilenameInfo =
-        this.extractDepNameVersionWithPeerContextFromFilename(currentFilename);
+      const depFilenameInfo = parseDepFilename(currentFilename);
       if (!depFilenameInfo) {
         throw new Error(
           `Cannot extract dependency name+version from filename ${currentFilename}`
         );
       }
 
-      const baseDepNameVersion = depFilenameInfo[0];
+      const baseDepNameVersion = depFilenameInfo.baseDepNameVersion;
       // Extract package name correctly for both scoped and regular packages
       // "@antfu/ni@25.0.0" -> "@antfu/ni"
       // "react@19.2.0" -> "react"
@@ -596,7 +521,7 @@ export class DependencyImportProcessor {
   private findCurrentFileUrl(filename: string): string | null {
     // Find the esm.sh URL that maps to this filename
     for (const [esmUrl, localFilename] of Object.entries(
-      this.manifest.urlToFile
+      this.lookupIndex.urlToFile
     )) {
       if (localFilename === filename) {
         return esmUrl;

@@ -2,23 +2,7 @@ import axios from "axios";
 import * as fs from "fs";
 import * as path from "path";
 import * as semver from "semver";
-
-export interface SubpathConfig {
-  name: string;
-  fromVersion?: string; // Semver constraint - only include for versions matching this
-}
-
-interface CDNMapping {
-  packages: { [key: string]: string };
-  standaloneSubpaths?: {
-    [packageName: string]: (string | SubpathConfig)[];
-  };
-  sameVersionRequired: string[][];
-}
-
-interface PeerDependencies {
-  [packageName: string]: string;
-}
+import { AnalyzedDependency, CDNMapping, LookupIndex, PeerDependencies } from "./interfaces";
 
 interface PackageInfo {
   name: string;
@@ -27,30 +11,12 @@ interface PackageInfo {
   hasManagedImports: boolean;
 }
 
-export interface AnalyzedDependency {
-  name: string;
-  version: string;
-  url: string;
-  downloaded: boolean;
-  transformed: boolean;
-  peerContext?: { [peerName: string]: string };
-  peerDependencies?: PeerDependencies;
-  depth: number; // For sorting by dependency order
-}
-
-interface DependencyAnalysisResult {
-  packages: AnalyzedDependency[]; // Packages to download with their peer context
-  urlToFile: { [url: string]: string }; // Will be populated during download
-  availableVersions: { [packageName: string]: string[] };
-  standaloneSubpaths?: { [packageName: string]: (string | SubpathConfig)[] };
-}
-
 export class DependencyAnalyzer {
   private cdnMappings: CDNMapping;
   private outputPath: string;
   private packageInfoCache: Map<string, PackageInfo[]> = new Map();
   private availableVersions: Map<string, string[]> = new Map();
-  private existingAnalysis: DependencyAnalysisResult | null = null;
+  private lookupIndex: LookupIndex | null = null;
   private existingPackageKeys: Set<string> = new Set();
 
   constructor(
@@ -100,18 +66,18 @@ export class DependencyAnalyzer {
     if (fs.existsSync(this.outputPath)) {
       try {
         const content = fs.readFileSync(this.outputPath, "utf8");
-        this.existingAnalysis = JSON.parse(content);
+        this.lookupIndex = JSON.parse(content);
 
         // Build a set of existing package keys for quick lookup
-        for (const pkg of this.existingAnalysis!.packages) {
+        for (const pkg of this.lookupIndex!.packages) {
           const key = this.makePackageKey(pkg);
           this.existingPackageKeys.add(key);
         }
 
         // Load existing availableVersions
-        if (this.existingAnalysis!.availableVersions) {
+        if (this.lookupIndex!.availableVersions) {
           for (const [pkgName, versions] of Object.entries(
-            this.existingAnalysis!.availableVersions
+            this.lookupIndex!.availableVersions
           )) {
             this.availableVersions.set(pkgName, versions);
           }
@@ -119,12 +85,12 @@ export class DependencyAnalyzer {
 
         console.log(
           `  ✅ Loaded existing analysis with ${
-            this.existingAnalysis!.packages.length
+            this.lookupIndex!.packages.length
           } packages`
         );
       } catch (error) {
         console.log(`  ⚠️  Failed to load existing analysis: ${error}`);
-        this.existingAnalysis = null;
+        this.lookupIndex = null;
       }
     } else {
       console.log("  ℹ️  No existing analysis found, will create new one");
@@ -571,7 +537,7 @@ export class DependencyAnalyzer {
 
     // Merge with existing packages
     let allPackages: AnalyzedDependency[];
-    if (this.existingAnalysis && this.existingAnalysis.packages.length > 0) {
+    if (this.lookupIndex && this.lookupIndex.packages.length > 0) {
       // Create a map of new packages by their key
       const newPackageMap = new Map<string, AnalyzedDependency>();
       for (const pkg of filteredNewPackages) {
@@ -579,7 +545,7 @@ export class DependencyAnalyzer {
       }
 
       // Keep all existing packages, replace with new version if exists
-      allPackages = this.existingAnalysis.packages.map((existingPkg) => {
+      allPackages = this.lookupIndex.packages.map((existingPkg) => {
         const key = this.makePackageKey(existingPkg);
         return newPackageMap.get(key) || existingPkg;
       });
@@ -602,9 +568,10 @@ export class DependencyAnalyzer {
       return a.name.localeCompare(b.name);
     });
 
-    const analysis: DependencyAnalysisResult = {
+    const analysis: LookupIndex = {
+      ...(this.lookupIndex as LookupIndex),
       packages: sortedDeps,
-      urlToFile: this.existingAnalysis?.urlToFile || {}, // Preserve existing urlToFile mappings
+      urlToFile: this.lookupIndex?.urlToFile || {}, // Preserve existing urlToFile mappings
       availableVersions: availableVersionsObject,
       standaloneSubpaths: this.cdnMappings.standaloneSubpaths || {},
     };
@@ -617,7 +584,7 @@ export class DependencyAnalyzer {
     fs.writeFileSync(this.outputPath, JSON.stringify(analysis, null, 2));
 
     const newCount = filteredNewPackages.length;
-    const existingCount = this.existingAnalysis?.packages.length || 0;
+    const existingCount = this.lookupIndex?.packages.length || 0;
 
     console.log(`📄 Analysis saved: ${this.outputPath}`);
     console.log(

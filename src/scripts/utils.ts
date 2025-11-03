@@ -260,3 +260,81 @@ export const DependencyUtils = {
     return [...new Set(validImports)]; // Remove duplicates
   },
 };
+
+// Stateless helpers for filename -> package parsing and key building
+export function parseDepFilename(
+  filename: string
+): { baseDepNameVersion: string; peerContext: string[] } | null {
+  // Reuse the same filename parsing rules used elsewhere in the project.
+  let packageNameVersion: string;
+  let peerContextPart: string = "";
+  let match: RegExpMatchArray | null;
+
+  if (filename.startsWith("@")) {
+    // Scoped package: @scope-package@version...
+    match = filename.match(/^(@[^-]+-[^@]+@[^_]+)_(.*?)_([^_]+)\.js$/);
+  } else {
+    match = filename.match(/^([^@]+@[^_]+)_(.*?)_([^_]+)\.js$/);
+  }
+
+  if (match) {
+    packageNameVersion = match[1];
+    peerContextPart = match[2];
+  } else {
+    if (filename.startsWith("@")) {
+      match = filename.match(/^(@[^-]+-[^@]+@[^_]+)_([^_]+)\.js$/);
+    } else {
+      match = filename.match(/^([^@]+@[^_]+)_([^_]+)\.js$/);
+    }
+
+    if (!match) return null;
+
+    packageNameVersion = match[1];
+    peerContextPart = "";
+  }
+
+  // Convert filename package format back to package name format
+  if (packageNameVersion.startsWith("@")) {
+    const firstDashIndex = packageNameVersion.indexOf("-");
+    if (firstDashIndex !== -1) {
+      packageNameVersion =
+        packageNameVersion.substring(0, firstDashIndex) +
+        "/" +
+        packageNameVersion.substring(firstDashIndex + 1);
+    }
+  }
+
+  const peerDependencies: string[] = [];
+  if (peerContextPart) {
+    const parts = peerContextPart.split("_");
+    for (const part of parts) {
+      const atMatch = part.match(/^(.+)-([\d.]+)$/);
+      if (atMatch) {
+        let pkgName = atMatch[1];
+        const version = atMatch[2];
+        if (pkgName.startsWith("@")) {
+          const firstDashIndex = pkgName.indexOf("-", 1);
+          if (firstDashIndex !== -1) {
+            pkgName = pkgName.substring(0, firstDashIndex) + "/" + pkgName.substring(firstDashIndex + 1);
+          }
+        }
+        peerDependencies.push(`${pkgName}@${version}`);
+      }
+    }
+  }
+
+  return { baseDepNameVersion: packageNameVersion, peerContext: peerDependencies };
+}
+
+export function buildDepNameVersionKeyWithPeerContext(
+  baseDepNameVersion: string,
+  peerContext: string[]
+): string {
+  if (!peerContext || peerContext.length === 0) return baseDepNameVersion;
+
+  const peerSuffix = peerContext
+    .map((peer) => peer.replace("@", "-").replace("/", "-"))
+    .join("_");
+
+  return `${baseDepNameVersion}_${peerSuffix}`;
+}

@@ -2,6 +2,7 @@ import axios from "axios";
 import * as crypto from "crypto";
 import * as fs from "fs";
 import * as path from "path";
+import { LookupIndex } from "./interfaces";
 import { DependencyUtils } from "./utils";
 
 interface AnalyzedDependency {
@@ -13,14 +14,6 @@ interface AnalyzedDependency {
   peerContext?: { [peerName: string]: string };
   peerDependencies?: { [packageName: string]: string };
   depth: number;
-}
-
-interface DependencyAnalysisResult {
-  packages: AnalyzedDependency[]; // Packages to download with their peer context
-  urlToFile: { [url: string]: string }; // URL -> filename mapping
-  availableVersions: { [packageName: string]: string[] };
-  relativeImports?: { [depNameVersion: string]: any }; 
-  standaloneSubpaths?: { [packageName: string]: any };
 }
 
 interface DependencyInfo {
@@ -42,7 +35,7 @@ export class DependencyDownloader {
   private dependencyLookup: DependencyLookup = {};
   private outputDir: string;
   private analysisPath: string;
-  private dependencyAnalysis: DependencyAnalysisResult | null = null;
+  private lookupIndex: LookupIndex | null = null;
   // Track subpaths of managed packages separately (e.g., react/jsx-runtime)
   // Key: base package name (e.g., "react"), Value: Set of subpaths (e.g., "/jsx-runtime")
   private managedSubpaths: Map<string, Set<string>> = new Map();
@@ -99,21 +92,21 @@ export class DependencyDownloader {
     }
 
     const analysisContent = fs.readFileSync(this.analysisPath, "utf8");
-    this.dependencyAnalysis = JSON.parse(analysisContent);
+    this.lookupIndex = JSON.parse(analysisContent);
 
     console.log(
       `  ✅ Loaded ${
-        this.dependencyAnalysis!.packages.length
+        this.lookupIndex!.packages.length
       } packages to download`
     );
   }
 
   private async downloadFromAnalysis(): Promise<void> {
-    if (!this.dependencyAnalysis) {
+    if (!this.lookupIndex) {
       throw new Error("Dependency analysis not loaded");
     }
 
-    const { packages } = this.dependencyAnalysis;
+    const { packages } = this.lookupIndex;
 
     let skippedCount = 0;
     let downloadedCount = 0;
@@ -335,7 +328,7 @@ export class DependencyDownloader {
     let filename: string;
 
     // Find if this package is part of a sameVersionRequired group
-    const sameVersionGroup = this.dependencyAnalysis?.availableVersions
+    const sameVersionGroup = this.lookupIndex?.availableVersions
       ? (() => {
           // Load cdn-mappings.json to get sameVersionRequired
           const cdnMappingsPath = path.join(process.cwd(), "cdn-mappings.json");
@@ -407,34 +400,34 @@ export class DependencyDownloader {
     }
 
     // Also add to urlToFile in the analysis (for index.lookup.json)
-    if (!this.dependencyAnalysis!.urlToFile[indexKey]) {
-      this.dependencyAnalysis!.urlToFile[indexKey] = filename;
+    if (!this.lookupIndex!.urlToFile[indexKey]) {
+      this.lookupIndex!.urlToFile[indexKey] = filename;
     }
   }
 
   private saveIndexLookup(): void {
-    if (!this.dependencyAnalysis) {
+    if (!this.lookupIndex) {
       console.warn("⚠️  No dependency analysis to save");
       return;
     }
 
-    const indexContent = JSON.stringify(this.dependencyAnalysis, null, 2);
+    const indexContent = JSON.stringify(this.lookupIndex, null, 2);
     fs.writeFileSync(this.analysisPath, indexContent);
 
     console.log(`📄 Index lookup saved: ${this.analysisPath}`);
     console.log(
-      `   Contains ${this.dependencyAnalysis.packages.length} packages`
+      `   Contains ${this.lookupIndex.packages.length} packages`
     );
     console.log(
       `   Contains ${
-        Object.keys(this.dependencyAnalysis.urlToFile).length
+        Object.keys(this.lookupIndex.urlToFile).length
       } URL -> file mappings`
     );
   }
 
   private cleanupBaseVersions() {
     // Read files in ./dependencies
-    this.dependencyAnalysis?.packages.forEach((pck) => {
+    this.lookupIndex?.packages.forEach((pck) => {
       if (pck && pck.peerContext && Object.keys(pck.peerContext).length > 0) {
         // Loop through dependency folder and delete base versions
         const dependencies = fs.readdirSync(this.outputDir);
@@ -449,10 +442,10 @@ export class DependencyDownloader {
           if (file.includes(pck.name) && isBaseVersionFilename) {
             console.debug("Removing base version of " + file);
             fs.rmSync(path.join(this.outputDir, file));
-            Object.keys(this.dependencyAnalysis?.urlToFile ?? {}).forEach(
+            Object.keys(this.lookupIndex?.urlToFile ?? {}).forEach(
               (url) => {
-                if (this.dependencyAnalysis?.urlToFile[url] === file) {
-                  delete this.dependencyAnalysis.urlToFile[url];
+                if (this.lookupIndex?.urlToFile[url] === file) {
+                  delete this.lookupIndex.urlToFile[url];
                 }
               }
             );
@@ -465,7 +458,7 @@ export class DependencyDownloader {
   private extractSubpathInfo(
     url: string
   ): { packageName: string; version: string; subpath: string } | null {
-    if (!this.dependencyAnalysis) {
+    if (!this.lookupIndex) {
       return null;
     }
 
@@ -507,7 +500,7 @@ export class DependencyDownloader {
       }
 
       // Check if the base package is in our managed packages
-      const isManaged = this.dependencyAnalysis.packages.some(
+      const isManaged = this.lookupIndex.packages.some(
         (pkg) => pkg.name === packageName
       );
 
@@ -533,7 +526,7 @@ export class DependencyDownloader {
   }
 
   private async downloadManagedSubpaths(): Promise<void> {
-    if (!this.dependencyAnalysis) {
+    if (!this.lookupIndex) {
       return;
     }
 
@@ -542,7 +535,7 @@ export class DependencyDownloader {
       console.log(`\n  📦 Processing subpaths for ${packageName}...`);
 
       // Get all versions of this package that we're managing
-      const packageVersions = this.dependencyAnalysis.packages
+      const packageVersions = this.lookupIndex.packages
         .filter((pkg) => pkg.name === packageName && !pkg.peerContext)
         .map((pkg) => pkg.version);
 

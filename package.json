@@ -18,7 +18,8 @@
     "dev": "yarn build:watch",
     "clean": "rm -rf dist",
     "process:deps": "yarn process:import-mapping && yarn process:imports",
-    "setup": "yarn && yarn download:deps && yarn process:deps"
+    "setup": "yarn && yarn download:deps && yarn process:deps",
+    "setup:force": "rimraf dependencies && yarn download:deps && yarn process:deps"
   },
   "keywords": [
     "browser-extension",

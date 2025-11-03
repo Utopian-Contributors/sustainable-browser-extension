@@ -1,4 +1,4 @@
-import { DependencyUtils } from './utils';
+import { DependencyUtils, parseDepFilename } from './utils';
 
 describe('DependencyUtils.extractRawImportsWithBabel', () => {
   describe('Should NOT match imports inside strings', () => {
@@ -74,5 +74,35 @@ describe('DependencyUtils.extractRawImportsWithBabel', () => {
       const imports = DependencyUtils.extractRawImportsWithBabel(code);
       expect(imports).toEqual(['bar', 'qux']);
     });
+  });
+});
+
+describe('parseDepFilename helper', () => {
+  test('parses filename with peer context', () => {
+    const info = parseDepFilename('framer-motion@10.16.16_react-18.1.0_006ab095.js');
+  expect(info).not.toBeNull();
+  expect(info!.baseDepNameVersion).toBe('framer-motion@10.16.16');
+  expect(info!.peerContext).toEqual(['react@18.1.0']);
+  });
+
+  test('parses filename without peer context', () => {
+    const info = parseDepFilename('react@19.2.0_165279c2.js');
+  expect(info).not.toBeNull();
+  expect(info!.baseDepNameVersion).toBe('react@19.2.0');
+  expect(info!.peerContext).toEqual([]);
+  });
+
+  test('parses scoped package filename', () => {
+    const info = parseDepFilename('@antfu-ni@25.0.0_e59d44ed.js');
+  expect(info).not.toBeNull();
+  expect(info!.baseDepNameVersion).toBe('@antfu/ni@25.0.0');
+  expect(info!.peerContext).toEqual([]);
+  });
+
+  test('parses latest tag filename', () => {
+    const info = parseDepFilename('node@latest_00eee0fc.js');
+  expect(info).not.toBeNull();
+  expect(info!.baseDepNameVersion).toBe('node@latest');
+  expect(info!.peerContext).toEqual([]);
   });
 });
