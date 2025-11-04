@@ -30,7 +30,6 @@ export class DependencyImportProcessor {
     const jsFiles = files.filter((f) => f.endsWith(".js"));
 
     let totalFiles = 0;
-    let skippedFiles = 0;
     let processedFiles = 0;
     let filesWithImports = 0;
     let totalReplacements = 0;
@@ -54,11 +53,6 @@ export class DependencyImportProcessor {
             (p) => p.name === pkgName && p.version === pkgVersion
           );
         }
-      }
-
-      if (pkg && pkg.transformed) {
-        skippedFiles++;
-        continue;
       }
 
       const filePath = path.join(this.outputDir, filename);
@@ -246,7 +240,6 @@ export class DependencyImportProcessor {
 
     console.log(`\n📊 Transformation summary:`);
     console.log(`   Total files: ${totalFiles}`);
-    console.log(`   Skipped (already transformed): ${skippedFiles}`);
     console.log(`   Processed: ${processedFiles}`);
     console.log(`   Files with imports: ${filesWithImports}`);
     console.log(`   Total replacements made: ${totalReplacements}`);
