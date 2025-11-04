@@ -3,7 +3,7 @@ name: Update deps
 on:
   schedule:
     # weekly run as example (CRON in UTC)
-    - cron: '0 13 * * 2'
+    - cron: '0 21 * * *'
 
 jobs:
   update-cdn-exports:
