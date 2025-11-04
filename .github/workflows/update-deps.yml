@@ -44,6 +44,23 @@ jobs:
             git diff cdn-exports.json
           fi
 
+      - name: Close existing update PRs
+        if: steps.check_changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Checking for existing dependency update PRs..."
+          existing_prs=$(gh pr list --state open --label "dependencies" --json number --jq '.[].number')
+          if [ -n "$existing_prs" ]; then
+            echo "Found existing PRs to close:"
+            echo "$existing_prs" | while read pr_number; do
+              echo "Closing PR #$pr_number"
+              gh pr close "$pr_number" --comment "Closing in favor of newer dependency updates"
+            done
+          else
+            echo "No existing dependency update PRs found"
+          fi
+
       - name: Create Pull Request if files changed
         if: steps.check_changes.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v4
