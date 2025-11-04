@@ -1,4 +1,4 @@
-name: Update cdn-exports.json
+name: Update deps
 
 on:
   schedule:
