@@ -1,5 +1,5 @@
 import * as fs from "fs";
-import { AnalyzedDependency, SubpathConfig } from "./analyze-dependencies";
+import { AnalyzedDependency, SubpathConfig } from "./interfaces";
 
 interface CompleteIndexLookup {
   dependencies: { [esmUrl: string]: string };
