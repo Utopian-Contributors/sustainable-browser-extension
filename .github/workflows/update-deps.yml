@@ -1,12 +1,12 @@
 name: Update deps
 
 on:
-  # schedule:
-  #   # weekly run as example (CRON in UTC)
-  #   - cron: '0 21 * * *'
   push: 
     branches:
       - main
+  # schedule:
+  #   # weekly run as example (CRON in UTC)
+  #   - cron: '0 21 * * *'
 
 jobs:
   update-deps:
