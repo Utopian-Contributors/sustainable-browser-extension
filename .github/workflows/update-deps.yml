@@ -6,7 +6,7 @@ on:
     - cron: '0 21 * * *'
 
 jobs:
-  update-cdn-exports:
+  update-deps:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
