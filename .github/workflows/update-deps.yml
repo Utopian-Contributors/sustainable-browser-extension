@@ -29,15 +29,18 @@ jobs:
         run: |
           chmod +x scripts/ci/update-cdn-exports.sh
           scripts/ci/update-cdn-exports.sh
-        continue-on-error: true
 
       - name: Check if changes were detected
         id: check_changes
         run: |
-          if git diff --quiet cdn-exports.json; then
+          git add -N cdn-exports.json
+          if git diff --exit-code cdn-exports.json > /dev/null 2>&1; then
             echo "changed=false" >> $GITHUB_OUTPUT
+            echo "No changes detected in cdn-exports.json"
           else
             echo "changed=true" >> $GITHUB_OUTPUT
+            echo "Changes detected in cdn-exports.json"
+            git diff cdn-exports.json
           fi
 
       - name: Create Pull Request if files changed
