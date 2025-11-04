@@ -3,7 +3,7 @@ name: Update deps
 on:
   schedule:
     # weekly run as example (CRON in UTC)
-    - cron: '10 22 * * *'
+    - cron: '*/15 * * * *'
 
 permissions:
   contents: write
