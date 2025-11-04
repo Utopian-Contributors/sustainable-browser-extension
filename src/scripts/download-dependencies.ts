@@ -5,17 +5,6 @@ import * as path from "path";
 import { LookupIndex } from "./interfaces";
 import { DependencyUtils } from "./utils";
 
-interface AnalyzedDependency {
-  name: string;
-  version: string;
-  url: string;
-  downloaded: boolean;
-  transformed: boolean;
-  peerContext?: { [peerName: string]: string };
-  peerDependencies?: { [packageName: string]: string };
-  depth: number;
-}
-
 interface DependencyInfo {
   name: string;
   version: string;
@@ -95,9 +84,7 @@ export class DependencyDownloader {
     this.lookupIndex = JSON.parse(analysisContent);
 
     console.log(
-      `  ✅ Loaded ${
-        this.lookupIndex!.packages.length
-      } packages to download`
+      `  ✅ Loaded ${this.lookupIndex!.packages.length} packages to download`
     );
   }
 
@@ -147,7 +134,9 @@ export class DependencyDownloader {
       }
     }
 
-    console.log(`\n  📊 Download summary: ${downloadedCount} downloaded, ${skippedCount} skipped (already downloaded)`);
+    console.log(
+      `\n  📊 Download summary: ${downloadedCount} downloaded, ${skippedCount} skipped (already downloaded)`
+    );
   }
 
   private async createPeerContextCopy(
@@ -306,7 +295,9 @@ export class DependencyDownloader {
 
     // If we have a baseUrl, resolve relative imports to absolute URLs
     if (baseUrl) {
-      return rawImports.map((imp) => DependencyUtils.resolveImportUrl(imp, baseUrl));
+      return rawImports.map((imp) =>
+        DependencyUtils.resolveImportUrl(imp, baseUrl)
+      );
     }
 
     return rawImports;
@@ -415,9 +406,7 @@ export class DependencyDownloader {
     fs.writeFileSync(this.analysisPath, indexContent);
 
     console.log(`📄 Index lookup saved: ${this.analysisPath}`);
-    console.log(
-      `   Contains ${this.lookupIndex.packages.length} packages`
-    );
+    console.log(`   Contains ${this.lookupIndex.packages.length} packages`);
     console.log(
       `   Contains ${
         Object.keys(this.lookupIndex.urlToFile).length
@@ -442,13 +431,11 @@ export class DependencyDownloader {
           if (file.includes(pck.name) && isBaseVersionFilename) {
             console.debug("Removing base version of " + file);
             fs.rmSync(path.join(this.outputDir, file));
-            Object.keys(this.lookupIndex?.urlToFile ?? {}).forEach(
-              (url) => {
+            Object.keys(this.lookupIndex?.urlToFile ?? {}).forEach((url) => {
                 if (this.lookupIndex?.urlToFile[url] === file) {
                   delete this.lookupIndex.urlToFile[url];
-                }
               }
-            );
+            });
           }
         });
       }
