@@ -50,7 +50,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "Checking for existing dependency update PRs..."
-          existing_prs=$(gh pr list --state open --label "dependencies" --json number --jq '.[].number')
+          existing_prs=$(gh pr list --state open --search "chore: update dependencies in:title" --json number --jq '.[].number')
           if [ -n "$existing_prs" ]; then
             echo "Found existing PRs to close:"
             echo "$existing_prs" | while read pr_number; do
