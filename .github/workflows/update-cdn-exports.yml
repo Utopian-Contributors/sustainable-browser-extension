@@ -3,7 +3,7 @@ name: Update cdn-exports.json
 on:
   schedule:
     # weekly run as example (CRON in UTC)
-    - cron: '0 3 * * 1'
+    - cron: '0 0 * * 1'
 
 jobs:
   update-cdn-exports:
