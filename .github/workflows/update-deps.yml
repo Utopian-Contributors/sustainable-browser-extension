@@ -2,8 +2,8 @@ name: Update deps
 
 on:
   schedule:
-    # weekly run as example (CRON in UTC)
-    - cron: '*/10 * * * *'
+    - cron: '*/10 * * * *' # weekly run as example (CRON in UTC)
+  workflow_dispatch: {}
 
 permissions:
   contents: write
