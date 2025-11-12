@@ -5,16 +5,33 @@
     "react-dom": "https://esm.sh/react-dom@{version}",
     "react-dom/client": "https://esm.sh/react-dom@{version}/client",
     "vue": "https://esm.sh/vue@{version}",
+    "svelte": "https://esm.sh/svelte@{version}",
+    "svelte/internal/disclose-version": "https://esm.sh/svelte@{version}/src/internal/disclose-version",
+    "svelte/internal/flags/legacy": "https://esm.sh/svelte@{version}/src/internal/flags/legacy",
+    "svelte/internal/client": "https://esm.sh/svelte@{version}/src/internal/client",
     "framer-motion": "https://esm.sh/framer-motion@{version}",
     "lucide-react": "https://esm.sh/lucide-react@{version}",
     "clsx": "https://esm.sh/clsx@{version}",
     "tailwind-merge": "https://esm.sh/tailwind-merge@{version}"
   },
   "standaloneSubpaths": {
-    "react": [{ "name": "jsx-runtime", "fromVersion": "^17.0.0 || ^18.0.0 || ^19.0.0" }],
-    "react-dom": [{ "name": "client", "fromVersion": "^18.0.0 || ^19.0.0" }]
+    "react": [
+      { "name": "jsx-runtime", "fromVersion": "^17.0.0 || ^18.0.0 || ^19.0.0" }
+    ],
+    "react-dom": [{ "name": "client", "fromVersion": "^18.0.0 || ^19.0.0" }],
+    "svelte": [
+      { "name": "internal/disclose-version", "fromVersion": "^5.0.0" },
+      { "name": "internal/flags/legacy", "fromVersion": "^5.0.0" },
+      { "name": "internal/client", "fromVersion": "^5.0.0" }
+    ]
   },
   "sameVersionRequired": [
-    ["react", "react-dom", "react/jsx-runtime", "react-dom/client"]
+    ["react", "react-dom", "react/jsx-runtime", "react-dom/client"],
+    [
+      "svelte",
+      "svelte/internal/disclose-version",
+      "svelte/internal/flags/legacy",
+      "svelte/internal/client"
+    ]
   ]
 }
